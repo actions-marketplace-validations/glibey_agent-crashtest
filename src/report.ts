@@ -3,7 +3,7 @@ import type { Severity } from './types.js';
 
 const useColor = (process.stdout.isTTY || !!process.env.FORCE_COLOR) && !process.env.NO_COLOR;
 const paint = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
-const c = {
+export const c = {
   bold: paint('1'),
   dim: paint('2'),
   red: paint('31'),

@@ -6,6 +6,7 @@ import { createDemoProject } from './demo.js';
 import { failsAt, reportToGithub, SEVERITIES } from './github.js';
 import { sessionStartOutput } from './hook.js';
 import { serve } from './mcp.js';
+import { runFix } from './fix-cli.js';
 import { renderText } from './report.js';
 import { scan } from './scan.js';
 
@@ -19,6 +20,8 @@ const HELP = `
   Options
     --dir <path>       project to scan (default: current directory)
     --project-only     skip global config in your home directory
+    --fix              show safe fixes as diffs and apply them after you confirm
+    --yes              with --fix: apply project changes without asking
     --json             machine-readable output
     --fail-on <level>  exit with code 1 on findings at or above: critical, high, medium, low
     --ci               same as --fail-on high
@@ -44,6 +47,8 @@ const { values, positionals } = parseArgs({
     'fail-on': { type: 'string' },
     github: { type: 'boolean' },
     hook: { type: 'string' },
+    fix: { type: 'boolean' },
+    yes: { type: 'boolean', short: 'y' },
     demo: { type: 'boolean' },
     version: { type: 'boolean', short: 'v' },
     help: { type: 'boolean', short: 'h' },
@@ -61,7 +66,17 @@ if (values.version) {
 
 if (positionals[0] === 'mcp') serve(version);
 else if (values.hook === 'session-start') sessionStart();
+else if (values.fix) fix();
 else run();
+
+async function fix() {
+  const demoDir = values.demo ? createDemoProject() : undefined;
+  try {
+    await runFix({ dir: demoDir ?? values.dir ?? process.cwd(), home: homedir(), includeHome: !values['project-only'] && !demoDir }, !!values.yes);
+  } finally {
+    if (demoDir) rmSync(demoDir, { recursive: true, force: true });
+  }
+}
 
 /** Claude Code SessionStart hook: must be quiet, fast, and never break the session. */
 function sessionStart() {

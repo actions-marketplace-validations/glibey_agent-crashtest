@@ -1,11 +1,20 @@
 {
   "name": "agent-crashtest",
   "displayName": "Agent Crashtest",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Finds and fixes prompt-injection risks in your AI agent setup: permissions, MCP servers, instruction files, secrets in reach, and AI agents in CI. Warns at session start when something is critical.",
-  "author": { "name": "Sergiy Glibey", "url": "https://github.com/glibey" },
+  "author": {
+    "name": "Sergiy Glibey",
+    "url": "https://github.com/glibey"
+  },
   "homepage": "https://github.com/glibey/agent-crashtest",
   "repository": "https://github.com/glibey/agent-crashtest",
   "license": "MIT",
-  "keywords": ["security", "prompt-injection", "mcp", "permissions", "ci"]
+  "keywords": [
+    "security",
+    "prompt-injection",
+    "mcp",
+    "permissions",
+    "ci"
+  ]
 }

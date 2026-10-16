@@ -12,7 +12,7 @@ Scan the user's AI agent setup with agent-crashtest, explain what is risky for *
 Use the first command that works. Both run locally and send nothing anywhere.
 
 - Inside the Claude Code plugin: `node "${CLAUDE_PLUGIN_ROOT}/plugin/agent-crashtest.mjs" --json`
-- Anywhere else: `npx --yes agent-crashtest@0.3.0 --json` (the version is pinned on purpose)
+- Anywhere else: `npx --yes agent-crashtest@0.4.0 --json` (the version is pinned on purpose)
 
 Run it from the project root. It checks the project and the user's global agent config; add `--project-only` if the user wants only the project.
 
@@ -27,6 +27,8 @@ The JSON has `score` (0–100), `grade` (A–F) and `findings[]`, each with `id`
 ## 3. Fix, one change at a time
 
 For each critical and high finding (medium too if the user wants), show the exact change as a diff and ask before applying it. Never apply several fixes at once.
+
+Shortcut for the fixes with one right answer (deny `.env` reads, pin npm MCP versions, remove auto-enabled project MCP servers): run the scanner with `--fix` (no `--yes`). Without a terminal it only prints the planned diffs. Show them to the user, and only after they agree run it again with `--fix --yes`, which applies the project changes and never touches files in the home directory.
 
 | Finding `id` | Fix |
 |---|---|

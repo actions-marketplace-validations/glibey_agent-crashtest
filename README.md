@@ -17,11 +17,13 @@ Claude Code, Codex, Cursor and MCP servers read web pages, READMEs, issues and e
 a prompt injection. `agent-crashtest` checks whether your setup would let that injection **run commands or steal your secrets**,
 and tells you exactly what to change.
 
-Try it on a deliberately broken project first:
+Fix the safe things automatically. You see every change as a diff and confirm it first:
 
 ```bash
-npx agent-crashtest --demo
+npx agent-crashtest --fix
 ```
+
+Try it on a deliberately broken project first: `npx agent-crashtest --demo`.
 
 **Use it where you work:** [terminal](#options) · [GitHub Actions](#github-action) · [Claude Code](#claude-code) · [Codex, Cursor and other agents](#codex-cursor-copilot-gemini-cli) · [any MCP client](#any-mcp-client)
 
@@ -92,7 +94,7 @@ Cursor, Codex, Claude Desktop, Windsurf, VS Code: add a read-only `scan` tool.
 ```json
 {
   "mcpServers": {
-    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.3.0", "mcp"] }
+    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.4.0", "mcp"] }
   }
 }
 ```
@@ -102,7 +104,7 @@ For Codex, in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.agent-crashtest]
 command = "npx"
-args = ["-y", "agent-crashtest@0.3.0", "mcp"]
+args = ["-y", "agent-crashtest@0.4.0", "mcp"]
 ```
 
 The version is pinned on purpose: an unpinned MCP server runs whatever gets published next.
@@ -122,12 +124,26 @@ npx agent-crashtest mcp           run as an MCP server over stdio
 
 --dir <path>        project to scan (default: current directory)
 --project-only      skip global config in your home directory
+--fix               show safe fixes as diffs and apply them after you confirm
+--yes               with --fix: apply project changes without asking (never touches files in ~)
 --json              machine-readable output
 --fail-on <level>   exit 1 on findings at or above: critical, high, medium, low
 --ci                same as --fail-on high
 --github            GitHub Actions mode: PR annotations, job summary, step outputs
 --demo              scan a deliberately vulnerable sample project
 ```
+
+## What `--fix` changes
+
+Only changes with one right answer, shown as a diff first:
+
+- denies agent reads of `.env` files (Claude Code `permissions.deny`, plus `.cursorignore` in Cursor projects)
+- pins `npx` MCP servers to the current version on npm
+- removes `enableAllProjectMcpServers` and `skipDangerousModePermissionPrompt`
+
+Files in your home directory affect every project, so they're asked about separately and never changed with `--yes`.
+Judgment calls, like narrowing `Bash(*)` to the commands your project uses or fixing a CI workflow, are listed with the
+exact fix; the [agent skill](#inside-your-agent-scan-and-fix) can walk you through them.
 
 ## Accuracy
 
