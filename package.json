@@ -1,0 +1,21 @@
+{
+  "name": "agent-crashtest",
+  "version": "0.1.0",
+  "description": "Crash-test your AI coding agent setup. One command, zero config: find out how easily Claude Code, Cursor & MCP can be hijacked by prompt injection.",
+  "type": "module",
+  "bin": { "agent-crashtest": "dist/cli.js" },
+  "files": ["dist", "!dist/*.test.js"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && node dist/cli.js",
+    "demo": "tsc && node dist/cli.js --demo",
+    "test": "tsc && node --test 'dist/**/*.test.js'"
+  },
+  "keywords": ["ai", "security", "prompt-injection", "claude-code", "cursor", "mcp", "agents", "red-team"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
