@@ -1,5 +1,5 @@
 name: 'agent-crashtest'
-description: 'Crash-test AI agent setups (Claude Code, Cursor, MCP, agents in CI) for prompt-injection risks. Runs on the runner, sends nothing.'
+description: 'Crash-test Claude Code, Cursor, MCP and CI agent setups for prompt-injection risks. Runs locally.'
 author: 'glibey'
 branding:
   icon: 'shield'
