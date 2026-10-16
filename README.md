@@ -4,6 +4,7 @@
 [![CI](https://github.com/glibey/agent-crashtest/actions/workflows/ci.yml/badge.svg)](https://github.com/glibey/agent-crashtest/actions/workflows/ci.yml)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-agent--crashtest-2ea44f?logo=github)](https://github.com/marketplace/actions/agent-crashtest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![agent-crashtest: A · 100/100](https://img.shields.io/badge/agent--crashtest-A%20%C2%B7%20100%2F100-brightgreen)](https://github.com/glibey/agent-crashtest)
 
 **How hackable is your AI coding agent?** One command, zero config, 100% local.
 
@@ -94,7 +95,7 @@ Cursor, Codex, Claude Desktop, Windsurf, VS Code: add a read-only `scan` tool.
 ```json
 {
   "mcpServers": {
-    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.4.0", "mcp"] }
+    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.5.0", "mcp"] }
   }
 }
 ```
@@ -104,10 +105,23 @@ For Codex, in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.agent-crashtest]
 command = "npx"
-args = ["-y", "agent-crashtest@0.4.0", "mcp"]
+args = ["-y", "agent-crashtest@0.5.0", "mcp"]
 ```
 
 The version is pinned on purpose: an unpinned MCP server runs whatever gets published next.
+
+## Badge
+
+Scored well? Put it in your README:
+
+```bash
+npx agent-crashtest --badge
+```
+
+[![agent-crashtest: A · 100/100](https://img.shields.io/badge/agent--crashtest-A%20%C2%B7%20100%2F100-brightgreen)](https://github.com/glibey/agent-crashtest)
+
+That badge is a snapshot. For one that stays current, run the [GitHub Action](#github-action) and use its workflow badge;
+the job summary prints the exact Markdown.
 
 ## For teams
 
@@ -125,6 +139,7 @@ npx agent-crashtest mcp           run as an MCP server over stdio
 --dir <path>        project to scan (default: current directory)
 --project-only      skip global config in your home directory
 --fix               show safe fixes as diffs and apply them after you confirm
+--badge             print a README badge with your grade
 --yes               with --fix: apply project changes without asking (never touches files in ~)
 --json              machine-readable output
 --fail-on <level>   exit 1 on findings at or above: critical, high, medium, low
@@ -163,7 +178,6 @@ Found a false positive or a missed risk? [Open an issue](https://github.com/glib
 ## Roadmap
 
 - [ ] `--attack`: live crash test that runs your real agent against poisoned files in a sandbox with canary secrets
-- [ ] README badge with your grade
 - [ ] Team version ([early access](https://github.com/glibey/agent-crashtest/issues/1))
 
 MIT

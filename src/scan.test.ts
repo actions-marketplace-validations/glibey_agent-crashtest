@@ -390,3 +390,23 @@ test('--fix leaves hand-written JSONC alone instead of reformatting it', async (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('badge: shields.io escaping, colors by grade, live workflow badge in the job summary', async () => {
+  const { badgeMarkdown, workflowBadgeMarkdown } = await import('./badge.js');
+  assert.equal(
+    badgeMarkdown({ grade: 'A', score: 100 }),
+    '[![agent-crashtest: A · 100/100](https://img.shields.io/badge/agent--crashtest-A%20%C2%B7%20100%2F100-brightgreen)](https://github.com/glibey/agent-crashtest)',
+  );
+  assert.match(badgeMarkdown({ grade: 'D', score: 42 }), /-orange\)/);
+  assert.equal(workflowBadgeMarkdown('me/app'), '[![agent-crashtest](https://github.com/me/app/actions/workflows/agent-crashtest.yml/badge.svg)](https://github.com/me/app/actions/workflows/agent-crashtest.yml)');
+
+  const { summary } = await import('./github.js');
+  const env = { ...process.env };
+  try {
+    process.env.GITHUB_REPOSITORY = 'me/app';
+    process.env.GITHUB_WORKFLOW_REF = 'me/app/.github/workflows/security.yml@refs/heads/main';
+    assert.ok(summary({ dir: '/w', score: 100, grade: 'A', findings: [], stats: {} as any }, '1.0.0', '/w').includes('/actions/workflows/security.yml/badge.svg'));
+  } finally {
+    process.env = env;
+  }
+});

@@ -53,6 +53,7 @@ export function renderText(result: ScanResult, version: string, home: string): s
   out.push(`  ${c.magenta('Share your score:')}`);
   out.push(`  ${shareText(result)}`);
   out.push('');
+  if (grade === 'A') out.push(`  ${c.green('Show it off:')} npx agent-crashtest --badge  ${c.dim('prints a README badge')}`, '');
   out.push(c.dim('  Everything ran locally. Nothing was sent anywhere.'));
   out.push(c.dim('  Using agents across a team? Early access: https://github.com/glibey/agent-crashtest/issues/1'));
   out.push('');

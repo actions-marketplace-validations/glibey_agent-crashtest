@@ -48,10 +48,27 @@ function toTags(s) {
 // src/github.ts
 import { appendFileSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
+
+// src/badge.ts
+var REPO = "https://github.com/glibey/agent-crashtest";
+var COLOR = { A: "brightgreen", B: "green", C: "yellow", D: "orange", F: "red" };
+function badgeMarkdown(result) {
+  const message = `${result.grade} \xB7 ${result.score}/100`;
+  const url = `https://img.shields.io/badge/${escape("agent-crashtest")}-${escape(message)}-${COLOR[result.grade] ?? "lightgrey"}`;
+  return `[![agent-crashtest: ${message}](${url})](${REPO})`;
+}
+function workflowBadgeMarkdown(repo, workflow = "agent-crashtest.yml") {
+  return `[![agent-crashtest](https://github.com/${repo}/actions/workflows/${workflow}/badge.svg)](https://github.com/${repo}/actions/workflows/${workflow})`;
+}
+function escape(s) {
+  return encodeURIComponent(s.replace(/-/g, "--").replace(/_/g, "__"));
+}
+
+// src/github.ts
 var SEVERITIES = ["critical", "high", "medium", "low"];
 var LEVEL = { critical: "error", high: "error", medium: "warning", low: "notice" };
 var ICON = { critical: "\u{1F534}", high: "\u{1F7E0}", medium: "\u{1F7E1}", low: "\u26AA" };
-var REPO = "https://github.com/glibey/agent-crashtest";
+var REPO2 = "https://github.com/glibey/agent-crashtest";
 function failsAt(result, threshold) {
   const limit = SEVERITIES.indexOf(threshold);
   if (limit < 0) return false;
@@ -78,7 +95,11 @@ function summary(result, version2, workspace) {
   } else {
     lines.push("No issues found. \u2705");
   }
-  lines.push("", `<sub>Ran on the runner, nothing was sent anywhere. [agent-crashtest](${REPO}) v${version2} \xB7 Using agents across a team? [Early access](${REPO}/issues/1)</sub>`, "");
+  if (process.env.GITHUB_REPOSITORY && process.env.GITHUB_WORKFLOW_REF) {
+    const workflow = process.env.GITHUB_WORKFLOW_REF.split("@")[0].split("/").pop();
+    lines.push("", "<details><summary>Add a live badge to your README</summary>", "", "```markdown", workflowBadgeMarkdown(process.env.GITHUB_REPOSITORY, workflow), "```", "", "</details>");
+  }
+  lines.push("", `<sub>Ran on the runner, nothing was sent anywhere. [agent-crashtest](${REPO2}) v${version2} \xB7 Using agents across a team? [Early access](${REPO2}/issues/1)</sub>`, "");
   return lines.join("\n");
 }
 function reportToGithub(result, version2, workspace) {
@@ -1387,6 +1408,7 @@ function renderText(result, version2, home) {
   out.push(`  ${c.magenta("Share your score:")}`);
   out.push(`  ${shareText(result)}`);
   out.push("");
+  if (grade2 === "A") out.push(`  ${c.green("Show it off:")} npx agent-crashtest --badge  ${c.dim("prints a README badge")}`, "");
   out.push(c.dim("  Everything ran locally. Nothing was sent anywhere."));
   out.push(c.dim("  Using agents across a team? Early access: https://github.com/glibey/agent-crashtest/issues/1"));
   out.push("");
@@ -1496,6 +1518,7 @@ var HELP = `
     --project-only     skip global config in your home directory
     --fix              show safe fixes as diffs and apply them after you confirm
     --yes              with --fix: apply project changes without asking
+    --badge            print a README badge with your grade
     --json             machine-readable output
     --fail-on <level>  exit with code 1 on findings at or above: critical, high, medium, low
     --ci               same as --fail-on high
@@ -1520,6 +1543,7 @@ var { values, positionals } = parseArgs({
     github: { type: "boolean" },
     hook: { type: "string" },
     fix: { type: "boolean" },
+    badge: { type: "boolean" },
     yes: { type: "boolean", short: "y" },
     demo: { type: "boolean" },
     version: { type: "boolean", short: "v" },
@@ -1570,6 +1594,10 @@ function run() {
       home,
       includeHome: !values["project-only"] && !demoDir
     });
+    if (values.badge) {
+      console.log(badgeMarkdown(result));
+      return;
+    }
     if (values.json) console.log(JSON.stringify(result, null, 2));
     else console.log(renderText(result, version, home));
     if (values.github) reportToGithub(result, version, result.dir);

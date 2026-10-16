@@ -7,6 +7,7 @@ import { failsAt, reportToGithub, SEVERITIES } from './github.js';
 import { sessionStartOutput } from './hook.js';
 import { serve } from './mcp.js';
 import { runFix } from './fix-cli.js';
+import { badgeMarkdown } from './badge.js';
 import { renderText } from './report.js';
 import { scan } from './scan.js';
 
@@ -22,6 +23,7 @@ const HELP = `
     --project-only     skip global config in your home directory
     --fix              show safe fixes as diffs and apply them after you confirm
     --yes              with --fix: apply project changes without asking
+    --badge            print a README badge with your grade
     --json             machine-readable output
     --fail-on <level>  exit with code 1 on findings at or above: critical, high, medium, low
     --ci               same as --fail-on high
@@ -48,6 +50,7 @@ const { values, positionals } = parseArgs({
     github: { type: 'boolean' },
     hook: { type: 'string' },
     fix: { type: 'boolean' },
+    badge: { type: 'boolean' },
     yes: { type: 'boolean', short: 'y' },
     demo: { type: 'boolean' },
     version: { type: 'boolean', short: 'v' },
@@ -105,6 +108,10 @@ function run() {
       includeHome: !values['project-only'] && !demoDir,
     });
 
+    if (values.badge) {
+      console.log(badgeMarkdown(result));
+      return;
+    }
     if (values.json) console.log(JSON.stringify(result, null, 2));
     else console.log(renderText(result, version, home));
     if (values.github) reportToGithub(result, version, result.dir);

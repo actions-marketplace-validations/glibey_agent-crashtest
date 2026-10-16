@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
 import type { ScanResult } from './scan.js';
 import type { Finding, Severity } from './types.js';
+import { workflowBadgeMarkdown } from './badge.js';
 
 export const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
 const LEVEL: Record<Severity, 'error' | 'warning' | 'notice'> = { critical: 'error', high: 'error', medium: 'warning', low: 'notice' };
@@ -39,6 +40,10 @@ export function summary(result: ScanResult, version: string, workspace: string):
     lines.push('', '</details>');
   } else {
     lines.push('No issues found. ✅');
+  }
+  if (process.env.GITHUB_REPOSITORY && process.env.GITHUB_WORKFLOW_REF) {
+    const workflow = process.env.GITHUB_WORKFLOW_REF.split('@')[0].split('/').pop();
+    lines.push('', '<details><summary>Add a live badge to your README</summary>', '', '```markdown', workflowBadgeMarkdown(process.env.GITHUB_REPOSITORY, workflow), '```', '', '</details>');
   }
   lines.push('', `<sub>Ran on the runner, nothing was sent anywhere. [agent-crashtest](${REPO}) v${version} · Using agents across a team? [Early access](${REPO}/issues/1)</sub>`, '');
   return lines.join('\n');
