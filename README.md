@@ -51,6 +51,13 @@ jobs:
 Findings show up as annotations on the PR diff and as a table in the job summary. Outputs: `score`, `grade`, `critical`, `high`.
 The action builds from the ref you pin and never downloads the package at run time.
 
+## For teams
+
+Rolling out Claude Code, Cursor or MCP across a team? We're building a Team version: a GitHub App for private repos,
+one policy file for what agents may do, a dashboard of agent setups across developers, and audit-ready reports.
+
+👉 **[Join the early access list](https://github.com/glibey/agent-crashtest/issues/1)**, free during the beta.
+
 ## Options
 
 ```

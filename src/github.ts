@@ -40,7 +40,7 @@ export function summary(result: ScanResult, version: string, workspace: string):
   } else {
     lines.push('No issues found. ✅');
   }
-  lines.push('', `<sub>Ran on the runner, nothing was sent anywhere. [agent-crashtest](${REPO}) v${version}</sub>`, '');
+  lines.push('', `<sub>Ran on the runner, nothing was sent anywhere. [agent-crashtest](${REPO}) v${version} · Using agents across a team? [Early access](${REPO}/issues/1)</sub>`, '');
   return lines.join('\n');
 }
 

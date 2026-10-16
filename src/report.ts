@@ -54,6 +54,7 @@ export function renderText(result: ScanResult, version: string, home: string): s
   out.push(`  ${shareText(result)}`);
   out.push('');
   out.push(c.dim('  Everything ran locally. Nothing was sent anywhere.'));
+  out.push(c.dim('  Using agents across a team? Early access: https://github.com/glibey/agent-crashtest/issues/1'));
   out.push('');
   return out.join('\n');
 }
