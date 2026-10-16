@@ -177,7 +177,11 @@ Found a false positive or a missed risk? [Open an issue](https://github.com/glib
 
 ## Roadmap
 
-- [ ] `--attack`: live crash test that runs your real agent against poisoned files in a sandbox with canary secrets
+- [ ] Policy file (`.agent-crashtest.yml`): declare what agents may do in your repo, enforced in CI
+- [ ] `--fix` for more cases: Codex `config.toml`, narrowing broad `Bash` rules to the commands your project uses
+- [ ] More agents: Windsurf, GitHub Copilot and Gemini CLI settings
 - [ ] Team version ([early access](https://github.com/glibey/agent-crashtest/issues/1))
+
+Ideas and requests: [open an issue](https://github.com/glibey/agent-crashtest/issues/new).
 
 MIT
