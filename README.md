@@ -95,7 +95,7 @@ Cursor, Codex, Claude Desktop, Windsurf, VS Code: add a read-only `scan` tool.
 ```json
 {
   "mcpServers": {
-    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.5.0", "mcp"] }
+    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.5.1", "mcp"] }
   }
 }
 ```
@@ -105,7 +105,7 @@ For Codex, in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.agent-crashtest]
 command = "npx"
-args = ["-y", "agent-crashtest@0.5.0", "mcp"]
+args = ["-y", "agent-crashtest@0.5.1", "mcp"]
 ```
 
 The version is pinned on purpose: an unpinned MCP server runs whatever gets published next.

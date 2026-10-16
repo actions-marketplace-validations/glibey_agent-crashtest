@@ -1,4 +1,5 @@
 import type { ScanResult } from './scan.js';
+import { displayPath } from './paths.js';
 import type { Severity } from './types.js';
 
 const useColor = (process.stdout.isTTY || !!process.env.FORCE_COLOR) && !process.env.NO_COLOR;
@@ -84,7 +85,3 @@ function wrap(text: string, indent: number, width = 92): string {
   return lines.join('\n');
 }
 
-function displayPath(file: string, dir: string, home: string): string {
-  if (file.startsWith(dir + '/')) return file.slice(dir.length + 1);
-  return file.startsWith(home) ? '~' + file.slice(home.length) : file;
-}

@@ -1,3 +1,4 @@
+import { relPath } from '../paths.js';
 import type { Context, Finding } from '../types.js';
 
 /**
@@ -11,7 +12,10 @@ const AGENT_STEP = /anthropics\/claude-code(-base)?-action|\bclaude\s+(-p|--prin
 // (codex-action is counted here to stay conservative).
 const CHECKED_ACTION = /anthropics\/claude-code-action@|openai\/codex-action@/;
 // A workflow-level check on who triggered it.
-const ACTOR_GATE = /author_association|github\.(actor|triggering_actor)\s*[!=]=|(sender|user)\.login\s*[!=]=|check-user-permission|getCollaboratorPermissionLevel|\/collaborators\/|permission\s*[!=]=\s*['"]?(admin|write|maintain)|allowed_?users|authorized_?users|\.includes\(\s*(context\.)?(actor|sender|github\.actor)|github\.event\.pull_request\.merged|(?<!!\s*)contains\(\s*github\.event\.(issue|pull_request)\.labels/i;
+// Exclusions such as `github.actor != 'dependabot[bot]'` don't stop strangers, so only allowlist-style checks count.
+const ACTOR_GATE = /author_association\s*==|,\s*github\.event\.[\w.]*author_association\s*\)|includes\([^)]*author_association|github\.(actor|triggering_actor)\s*==|(sender|user)\.login\s*==|check-user-permission|getCollaboratorPermissionLevel|\/collaborators\/|permission\s*[!=]=\s*['"]?(admin|write|maintain)|allowed_?users|authorized_?users|\.includes\(\s*(context\.)?(actor|sender|github\.actor)|github\.event\.pull_request\.merged|(?<!!\s*)contains\(\s*github\.event\.(issue|pull_request)\.labels/i;
+// author_association compared against the write-access roles, e.g. `case "$ASSOC" in OWNER | MEMBER | COLLABORATOR)`.
+const ALLOWLISTED_ROLES = /author_association[\s\S]*\b(OWNER|MEMBER|COLLABORATOR)\b[\s\S]*\b(OWNER|MEMBER|COLLABORATOR)\b/;
 // Event types only a maintainer can cause, so a human has looked at the issue first.
 const MAINTAINER_TYPES = ['labeled', 'unlabeled', 'assigned', 'milestoned'];
 const UNTRUSTED_EVENTS = ['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion_comment', 'discussion', 'pull_request_review_comment', 'pull_request_review'];
@@ -25,7 +29,7 @@ export function checkWorkflows(ctx: Context): Finding[] {
   const findings: Finding[] = [];
   for (const wf of ctx.workflows) {
     const text = stripComments(wf.content);
-    const rel = wf.file.slice(ctx.dir.length + 1);
+    const rel = relPath(ctx.dir, wf.file);
     const key = text.match(API_KEY);
     if (key) {
       findings.push({
@@ -44,7 +48,7 @@ export function checkWorkflows(ctx: Context): Finding[] {
     const maintainerOnly = (e: string) => (on.get(e) ?? []).length > 0 && on.get(e)!.every((t) => MAINTAINER_TYPES.includes(t));
     const untrusted = [...on.keys()].filter((e) => UNTRUSTED_EVENTS.includes(e) && !maintainerOnly(e));
     // Gates often live in a separate job whose output the agent job depends on, so check the whole file.
-    const gated = ACTOR_GATE.test(text);
+    const gated = ACTOR_GATE.test(text) || ALLOWLISTED_ROLES.test(text);
     const workflowWrites = /contents:\s*write|permissions:\s*write-all/.test(text.split(/^jobs:/m)[0]);
     for (const job of splitJobs(text).filter((j) => AGENT_STEP.test(j))) {
       // An empty value ("" or '') keeps the write-access check on.

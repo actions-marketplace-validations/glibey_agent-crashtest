@@ -5,6 +5,7 @@ import { checkMcp } from './checks/mcp.js';
 import { checkPermissions, readPermissions } from './checks/permissions.js';
 import { checkTrifecta } from './checks/trifecta.js';
 import { checkWorkflows } from './checks/workflows.js';
+import { sanitize } from './text.js';
 import type { Context, Finding, Severity } from './types.js';
 
 export const PENALTY: Record<Severity, number> = { critical: 30, high: 12, medium: 5, low: 1 };
@@ -31,7 +32,9 @@ export function evaluate(ctx: Context): ScanResult {
     ...checkCodex(ctx),
     ...checkInstructions(ctx),
     ...checkWorkflows(ctx),
-  ].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
+  ]
+    .map(safe)
+    .sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
 
   const score = Math.max(0, 100 - findings.reduce((sum, f) => sum + PENALTY[f.severity], 0));
   return {
@@ -55,4 +58,9 @@ function grade(score: number): string {
   if (score >= 60) return 'C';
   if (score >= 40) return 'D';
   return 'F';
+}
+
+/** Finding text quotes scanned files (server names, decoded hidden text, paths), so strip anything that could act on the terminal or CI log. */
+function safe(f: Finding): Finding {
+  return { ...f, title: sanitize(f.title), detail: sanitize(f.detail), fix: sanitize(f.fix), file: f.file && sanitize(f.file) };
 }

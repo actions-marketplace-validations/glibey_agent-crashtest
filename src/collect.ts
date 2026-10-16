@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { inDir } from './paths.js';
 import { parseToml } from './toml.js';
 import type { Client, Context, McpServer, SettingsFile, TextFile } from './types.js';
 
@@ -130,7 +131,7 @@ function collectSecrets(dir: string, home: string, includeHome: boolean): string
       if (isFile(file)) found.push(file);
     }
   }
-  return found;
+  return [...new Set(found)];
 }
 
 function walk(root: string, depth: number, visit: (file: string) => void) {
@@ -197,7 +198,7 @@ function collectWorkflows(dir: string): TextFile[] {
 function collectEnvKeys(dir: string, secretFiles: string[]): Record<string, string[]> {
   const keys: Record<string, string[]> = {};
   for (const file of secretFiles) {
-    if (!file.startsWith(dir + '/') || !/\/\.env[^/]*$/.test(file)) continue;
+    if (!inDir(file, dir) || !/^\.env/.test(basename(file))) continue;
     const names = (readText(file) ?? '')
       .split('\n')
       .map((line) => line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1])

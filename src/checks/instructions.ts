@@ -1,15 +1,18 @@
+import { displayPath } from '../paths.js';
 import type { Context, Finding } from '../types.js';
 
 // Unicode "tag" characters are invisible but models read them as ASCII.
 const TAG_CHARS = /[\u{E0000}-\u{E007F}]+/gu;
-const BIDI = /[‪-‮⁦-⁩]/g;
+// Subdivision flags (England, Scotland, Wales…) are a black flag followed by tag characters and a cancel tag.
+const FLAG_EMOJI = /\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}/gu;
+const BIDI = /[\u202A-\u202E\u2066-\u2069]/g;
 
 export function checkInstructions(ctx: Context): Finding[] {
   const findings: Finding[] = [];
   for (const { file, content } of ctx.instructionFiles) {
-    const rel = file.startsWith(ctx.dir) ? file.slice(ctx.dir.length + 1) : file.replace(ctx.home, '~');
+    const rel = displayPath(file, ctx.dir, ctx.home);
 
-    const tags = content.match(TAG_CHARS);
+    const tags = content.replace(FLAG_EMOJI, '').match(TAG_CHARS);
     if (tags) {
       const hidden = tags.map(decodeTags).join(' ').trim();
       findings.push({

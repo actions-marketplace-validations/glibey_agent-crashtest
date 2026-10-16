@@ -25,10 +25,10 @@ export function checkMcp(ctx: Context): Finding[] {
   const findings: Finding[] = [];
 
   for (const s of ctx.mcpServers) {
-    const runner = s.command?.split('/').pop();
-    if (runner && RUNNERS.has(runner)) {
-      const pkg = s.args.find((a) => !a.startsWith('-'));
-      if (pkg && isUnpinned(pkg)) {
+    const spec = packageSpec(s);
+    if (spec) {
+      const { runner, spec: pkg } = spec;
+      if (isUnpinned(pkg)) {
         findings.push({
           id: 'mcp-unpinned',
           severity: 'medium',
@@ -76,17 +76,51 @@ export function checkMcp(ctx: Context): Finding[] {
   return findings;
 }
 
-function isUnpinned(pkg: string): boolean {
-  if (/^[./]/.test(pkg)) return false; // local path
-  const at = pkg.lastIndexOf('@');
-  if (at <= 0) return true; // no version (or scoped package without version)
-  const version = pkg.slice(at + 1);
+const VALUE_FLAGS = new Set(['--from', '--package', '-p', '--spec', '--with', '--python', '--index-url', '-i']);
+const PACKAGE_FLAGS = new Set(['--from', '--package', '-p', '--spec']);
+
+export interface PackageSpec {
+  runner: string;
+  /** Index in args of the value holding the package, and the text before it in that arg (e.g. "--from="). */
+  index: number;
+  prefix: string;
+  spec: string;
+}
+
+/** The package an npx / uvx / pipx MCP server launches, e.g. "@scope/pkg@1.2.3" or "mcp-server-fetch==1.0". */
+export function packageSpec(server: { command?: string; args: string[] }): PackageSpec | undefined {
+  const runner = server.command?.split(/[\\/]/).pop()?.replace(/\.(cmd|exe)$/i, '');
+  if (!runner || !RUNNERS.has(runner)) return undefined;
+  const { args } = server;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const eq = a.match(/^(--[\w-]+=)(.*)$/);
+    if (eq && PACKAGE_FLAGS.has(eq[1].slice(0, -1))) return { runner, index: i, prefix: eq[1], spec: eq[2] };
+    if (PACKAGE_FLAGS.has(a) && i + 1 < args.length) return { runner, index: i + 1, prefix: '', spec: args[i + 1] };
+    if (VALUE_FLAGS.has(a)) { i++; continue; }
+    if (a.startsWith('-')) continue;
+    if (runner === 'pipx' && a === 'run') continue;
+    return { runner, index: i, prefix: '', spec: a };
+  }
+  return undefined;
+}
+
+/** npm style "pkg@1.2.3" and Python style "pkg==1.2.3" count as pinned; ranges, tags and bare names don't. */
+export function isUnpinned(spec: string): boolean {
+  if (/^[./~]|^[a-z+]+:\/\//i.test(spec)) return false; // local path or URL: not a registry package
+  if (/==\s*[\w.]+$/.test(spec)) return false;
+  if (/[<>~!]=|[<>]/.test(spec)) return true;
+  const at = spec.lastIndexOf('@');
+  if (at <= 0) return true; // no version (or a scoped package without one)
+  const version = spec.slice(at + 1);
   return version === 'latest' || version === 'next' || /^[\^~]/.test(version);
 }
 
-function stripVersion(pkg: string): string {
-  const at = pkg.lastIndexOf('@');
-  return at > 0 ? pkg.slice(0, at) : pkg;
+export function stripVersion(spec: string): string {
+  const py = spec.search(/[=<>~!]=|[<>]/);
+  if (py > 0) return spec.slice(0, py);
+  const at = spec.lastIndexOf('@');
+  return at > 0 ? spec.slice(0, at) : spec;
 }
 
 export function mask(value: string): string {

@@ -175,7 +175,22 @@ import { createInterface } from "node:readline";
 
 // src/collect.ts
 import { existsSync, readFileSync as readFileSync2, readdirSync, statSync } from "node:fs";
-import { join as join3, resolve } from "node:path";
+import { basename, join as join3, resolve } from "node:path";
+
+// src/paths.ts
+import { isAbsolute as isAbsolute2, relative as relative2, sep } from "node:path";
+function inDir(file, dir) {
+  const rel = relative2(dir, file);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute2(rel);
+}
+function relPath(dir, file) {
+  return relative2(dir, file).split(sep).join("/");
+}
+function displayPath(file, dir, home) {
+  if (inDir(file, dir)) return relPath(dir, file);
+  if (inDir(file, home)) return `~/${relPath(home, file)}`;
+  return file;
+}
 
 // src/toml.ts
 function parseToml(text) {
@@ -193,16 +208,33 @@ function parseToml(text) {
     }
     const eq = indexOutsideQuotes(line, "=");
     if (eq < 0) continue;
-    while (!balanced(line) && i + 1 < lines.length) line += " " + stripComment(lines[++i]).trim();
     const keys = splitKey(line.slice(0, eq));
+    let value;
+    const raw = lines[i].slice(lines[i].indexOf("=") + 1).trimStart();
+    const delim = raw.startsWith('"""') ? '"""' : raw.startsWith("'''") ? "'''" : void 0;
+    if (delim) {
+      let text2 = raw.slice(3);
+      while (!text2.includes(delim) && i + 1 < lines.length) text2 += "\n" + lines[++i];
+      value = text2.slice(0, text2.indexOf(delim) >= 0 ? text2.indexOf(delim) : void 0).replace(/^\n/, "");
+    } else {
+      while (!balanced(line) && i + 1 < lines.length) line += " " + stripComment(lines[++i]).trim();
+      try {
+        value = parseValue(line.slice(eq + 1).trim());
+      } catch {
+        continue;
+      }
+    }
     let target = table;
     for (const key of keys.slice(0, -1)) target = target[key] ??= {};
-    target[keys[keys.length - 1]] = parseValue(line.slice(eq + 1).trim());
+    target[keys[keys.length - 1]] = value;
   }
   return root;
 }
 function parseValue(v) {
-  if (v.startsWith('"')) return JSON.parse(v.slice(0, closingQuote(v, 0) + 1));
+  if (v.startsWith('"')) {
+    const body = v.slice(0, closingQuote(v, 0) + 1);
+    return JSON.parse(body.replace(/\\U([0-9a-fA-F]{8})/g, (_, h) => JSON.stringify(String.fromCodePoint(parseInt(h, 16))).slice(1, -1)).replace(/\\e/g, "\\u001b"));
+  }
   if (v.startsWith("'")) return v.slice(1, v.indexOf("'", 1));
   if (v === "true" || v === "false") return v === "true";
   if (v.startsWith("[")) return splitTop(v.slice(1, v.lastIndexOf("]"))).map(parseValue);
@@ -394,7 +426,7 @@ function collectSecrets(dir, home, includeHome) {
       if (isFile(file)) found.push(file);
     }
   }
-  return found;
+  return [...new Set(found)];
 }
 function walk(root, depth, visit) {
   if (depth < 0) return;
@@ -460,7 +492,7 @@ function collectWorkflows(dir) {
 function collectEnvKeys(dir, secretFiles) {
   const keys = {};
   for (const file of secretFiles) {
-    if (!file.startsWith(dir + "/") || !/\/\.env[^/]*$/.test(file)) continue;
+    if (!inDir(file, dir) || !/^\.env/.test(basename(file))) continue;
     const names = (readText(file) ?? "").split("\n").map((line) => line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1]).filter((n) => !!n);
     if (names.length) keys[file] = names;
   }
@@ -542,12 +574,13 @@ function checkCodex(ctx) {
 
 // src/checks/instructions.ts
 var TAG_CHARS = /[\u{E0000}-\u{E007F}]+/gu;
-var BIDI = /[‪-‮⁦-⁩]/g;
+var FLAG_EMOJI = /\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}/gu;
+var BIDI = /[\u202A-\u202E\u2066-\u2069]/g;
 function checkInstructions(ctx) {
   const findings = [];
   for (const { file, content } of ctx.instructionFiles) {
-    const rel = file.startsWith(ctx.dir) ? file.slice(ctx.dir.length + 1) : file.replace(ctx.home, "~");
-    const tags = content.match(TAG_CHARS);
+    const rel = displayPath(file, ctx.dir, ctx.home);
+    const tags = content.replace(FLAG_EMOJI, "").match(TAG_CHARS);
     if (tags) {
       const hidden = tags.map(decodeTags).join(" ").trim();
       findings.push({
@@ -600,10 +633,10 @@ function categorize(server) {
 function checkMcp(ctx) {
   const findings = [];
   for (const s of ctx.mcpServers) {
-    const runner = s.command?.split("/").pop();
-    if (runner && RUNNERS.has(runner)) {
-      const pkg = s.args.find((a) => !a.startsWith("-"));
-      if (pkg && isUnpinned(pkg)) {
+    const spec = packageSpec(s);
+    if (spec) {
+      const { runner, spec: pkg } = spec;
+      if (isUnpinned(pkg)) {
         findings.push({
           id: "mcp-unpinned",
           severity: "medium",
@@ -647,22 +680,48 @@ function checkMcp(ctx) {
   }
   return findings;
 }
-function isUnpinned(pkg) {
-  if (/^[./]/.test(pkg)) return false;
-  const at = pkg.lastIndexOf("@");
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["--from", "--package", "-p", "--spec", "--with", "--python", "--index-url", "-i"]);
+var PACKAGE_FLAGS = /* @__PURE__ */ new Set(["--from", "--package", "-p", "--spec"]);
+function packageSpec(server) {
+  const runner = server.command?.split(/[\\/]/).pop()?.replace(/\.(cmd|exe)$/i, "");
+  if (!runner || !RUNNERS.has(runner)) return void 0;
+  const { args } = server;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const eq = a.match(/^(--[\w-]+=)(.*)$/);
+    if (eq && PACKAGE_FLAGS.has(eq[1].slice(0, -1))) return { runner, index: i, prefix: eq[1], spec: eq[2] };
+    if (PACKAGE_FLAGS.has(a) && i + 1 < args.length) return { runner, index: i + 1, prefix: "", spec: args[i + 1] };
+    if (VALUE_FLAGS.has(a)) {
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    if (runner === "pipx" && a === "run") continue;
+    return { runner, index: i, prefix: "", spec: a };
+  }
+  return void 0;
+}
+function isUnpinned(spec) {
+  if (/^[./~]|^[a-z+]+:\/\//i.test(spec)) return false;
+  if (/==\s*[\w.]+$/.test(spec)) return false;
+  if (/[<>~!]=|[<>]/.test(spec)) return true;
+  const at = spec.lastIndexOf("@");
   if (at <= 0) return true;
-  const version2 = pkg.slice(at + 1);
+  const version2 = spec.slice(at + 1);
   return version2 === "latest" || version2 === "next" || /^[\^~]/.test(version2);
 }
-function stripVersion(pkg) {
-  const at = pkg.lastIndexOf("@");
-  return at > 0 ? pkg.slice(0, at) : pkg;
+function stripVersion(spec) {
+  const py = spec.search(/[=<>~!]=|[<>]/);
+  if (py > 0) return spec.slice(0, py);
+  const at = spec.lastIndexOf("@");
+  return at > 0 ? spec.slice(0, at) : spec;
 }
 function mask(value) {
   return value.length <= 8 ? "****" : `${value.slice(0, 4)}\u2026${value.slice(-2)}`;
 }
 
 // src/checks/permissions.ts
+import { basename as basename2, dirname } from "node:path";
 var NET_CMD = /^(curl|wget|nc|ncat|netcat|scp|sftp|ssh|rsync|ftp|telnet|http|xh)(?=$|[\s:])/;
 var LOCAL_HOST = /localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0/;
 var INTERPRETER = /^(python3?|node|deno|bun|ruby|perl|php|bash|sh|zsh|eval|npx|bunx|pnpx|uvx|tsx|ts-node)(?=$|[\s:])(.*)$/;
@@ -670,32 +729,59 @@ var WALLET_KEY = /(^|_)(PRIVATE_?KEY|PRIV_?KEY|PK|MNEMONIC|SEED_?PHRASE|SECRET_?
 function readPermissions(ctx) {
   const allow = [];
   const deny = [];
+  const ruleFile = /* @__PURE__ */ new Map();
   let bypass = false;
   let bypassIgnoredFile;
   for (const { file, data } of ctx.claudeSettings) {
     const p = data.permissions ?? {};
-    if (Array.isArray(p.allow)) allow.push(...p.allow.map(String));
+    if (Array.isArray(p.allow)) {
+      for (const rule of p.allow.map(String)) {
+        allow.push(rule);
+        if (!ruleFile.has(rule)) ruleFile.set(rule, file);
+      }
+    }
     if (Array.isArray(p.deny)) deny.push(...p.deny.map(String));
     if (p.defaultMode === "bypassPermissions") {
       if (isProjectFile(ctx, file)) bypassIgnoredFile = file;
       else bypass = true;
     }
   }
+  const bashUnrestricted = bypass || allow.some((r) => /^Bash(\(\*(:\*)?\))?$/.test(r.trim()));
+  const interpreters = allow.filter(isInterpreterRule);
+  const shellCanRead = bashUnrestricted || interpreters.length > 0 || allow.some(isFileReadRule);
+  const projectSecrets = ctx.secretFiles.filter((f) => dirname(f) === ctx.dir);
   return {
     allow,
     deny,
     bypass,
     bypassIgnoredFile,
-    bashUnrestricted: bypass || allow.some((r) => /^Bash(\(\*(:\*)?\))?$/.test(r.trim())),
+    bashUnrestricted,
     exfilCommands: allow.filter(isExfilRule),
-    interpreters: allow.filter(isInterpreterRule),
+    interpreters,
     webFetchUnrestricted: bypass || allow.includes("WebFetch"),
     webSearch: bypass || allow.includes("WebSearch"),
-    envDenied: deny.some((r) => /^Read\([^)]*\.env/.test(r) || /^Read\(\*\*\)$/.test(r))
+    readableSecrets: projectSecrets.filter((f) => shellCanRead || !readDenied(relPath(ctx.dir, f), deny)),
+    shellCanRead,
+    ruleFile
   };
 }
 function isProjectFile(ctx, file) {
-  return file.startsWith(ctx.dir + "/");
+  return ctx.dir !== ctx.home && dirname(dirname(file)) === ctx.dir;
+}
+function isFileReadRule(rule) {
+  const cmd = bashCommand(rule);
+  return !!cmd && cmd.includes("*") && /^(cat|head|tail|less|more|bat|grep|rg|awk|sed|cp|base64|xxd|od|strings)(?=$|[\s:])/.test(cmd);
+}
+function readDenied(rel, deny) {
+  return deny.some((rule) => {
+    const pattern = rule.match(/^Read\((.*)\)$/)?.[1].trim();
+    if (!pattern) return false;
+    if (pattern === "**" || pattern === "*" || pattern === "./**") return true;
+    const p = pattern.replace(/^\.\//, "").replace(/^\//, "");
+    const anyDir = p.startsWith("**/");
+    const glob = (anyDir ? p.slice(3) : p).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
+    return new RegExp(`^${anyDir ? "(?:.*/)?" : ""}${glob}$`).test(rel);
+  });
 }
 var HEADLESS_NOTE = "Auto mode drops this rule in interactive sessions, but Manual mode and every headless run (claude -p, Agent SDK, CI) apply it with no one watching.";
 function bashCommand(rule) {
@@ -719,7 +805,8 @@ function isInterpreterRule(rule) {
 }
 function checkPermissions(ctx, perms) {
   const findings = [];
-  const settingsFile = ctx.claudeSettings[0]?.file;
+  const fileOf = (rules) => rules.map((r) => perms.ruleFile.get(r)).find(Boolean);
+  const bashRules = perms.allow.filter((r) => /^Bash(\(\*(:\*)?\))?$/.test(r.trim()));
   if (perms.bypass) {
     findings.push({
       id: "bypass-permissions",
@@ -736,7 +823,7 @@ function checkPermissions(ctx, perms) {
       title: "Any shell command is auto-approved",
       detail: `An allow rule like "Bash" or "Bash(*)" lets injected instructions run curl, rm, or anything else silently. ${HEADLESS_NOTE}`,
       fix: 'Replace it with narrow rules such as "Bash(npm test:*)" or "Bash(git status)".',
-      file: settingsFile
+      file: fileOf(bashRules)
     });
   }
   if (perms.bypassIgnoredFile) {
@@ -756,7 +843,7 @@ function checkPermissions(ctx, perms) {
       title: "Network commands are auto-approved",
       detail: `Allowed without asking: ${perms.exfilCommands.join(", ")}. These are a direct channel to send your data out, and unlike "Bash(*)" they stay in effect in auto mode, so they skip the safety classifier.`,
       fix: "Remove these allow rules, or limit them to exact URLs you trust.",
-      file: settingsFile
+      file: fileOf(perms.exfilCommands)
     });
   }
   if (!perms.bashUnrestricted && perms.interpreters.length) {
@@ -766,7 +853,7 @@ function checkPermissions(ctx, perms) {
       title: "Script interpreters are auto-approved",
       detail: `Allowed without asking: ${perms.interpreters.join(", ")}. "python -c" or "node -e" can run any code, so this equals unrestricted shell. ${HEADLESS_NOTE}`,
       fix: 'Allow specific scripts ("Bash(node scripts/build.js)") instead of the whole interpreter.',
-      file: settingsFile
+      file: fileOf(perms.interpreters)
     });
   }
   if (!perms.bypass && perms.allow.includes("WebFetch")) {
@@ -776,25 +863,26 @@ function checkPermissions(ctx, perms) {
       title: "WebFetch is auto-approved for every domain",
       detail: "The agent reads any web page without asking. Web pages are the #1 source of indirect prompt injection.",
       fix: 'Use per-domain rules like "WebFetch(domain:docs.python.org)".',
-      file: settingsFile
+      file: fileOf(["WebFetch"])
     });
   }
-  const projectSecrets = ctx.secretFiles.filter((f) => f.startsWith(ctx.dir + "/"));
-  const walletKeys = Object.entries(ctx.envKeys).flatMap(([file, names]) => names.filter((n) => WALLET_KEY.test(n.toUpperCase())).map((n) => `${n} (${file.slice(ctx.dir.length + 1)})`));
-  if (walletKeys.length && !perms.envDenied) {
+  const readable = new Set(perms.readableSecrets);
+  const shellNote = perms.shellCanRead ? " Deny rules for Read don't help here: an auto-approved shell rule can print the file (e.g. cat .env)." : "";
+  const walletKeys = Object.entries(ctx.envKeys).filter(([file]) => readable.has(file)).flatMap(([file, names]) => names.filter((n) => WALLET_KEY.test(n.toUpperCase())).map((n) => `${n} (${relPath(ctx.dir, file)})`));
+  if (walletKeys.length) {
     findings.push({
       id: "wallet-keys-readable",
       severity: "critical",
       title: "Wallet private keys are readable by the agent",
-      detail: `${walletKeys.join(", ")}. One injected instruction can read the key, and a leaked private key means drained funds, not a rotated token.`,
+      detail: `${walletKeys.join(", ")}. One injected instruction can read the key, and a leaked private key means drained funds, not a rotated token.${shellNote}`,
       fix: 'Add "Read(./.env)" and "Read(./.env.*)" to permissions.deny, and keep signing keys in a hardware wallet or a key manager, not in the repo.'
     });
-  } else if (projectSecrets.length && !perms.envDenied) {
+  } else if (readable.size) {
     findings.push({
       id: "secrets-readable",
       severity: "high",
       title: "Secret files are readable by the agent",
-      detail: `Found ${projectSecrets.map((f) => f.slice(ctx.dir.length + 1)).join(", ")} and no deny rule. Claude Code reads project files without asking.`,
+      detail: `Found ${[...readable].map((f) => relPath(ctx.dir, f)).join(", ")} with no deny rule covering them. Claude Code reads project files without asking.${shellNote}`,
       fix: 'Add "Read(./.env)" and "Read(./.env.*)" (and other secret paths) to permissions.deny.'
     });
   }
@@ -810,7 +898,7 @@ function checkPermissions(ctx, perms) {
         file
       });
     }
-    if (data.skipDangerousModePermissionPrompt === true && !(inProject && file.endsWith("/settings.json"))) {
+    if (data.skipDangerousModePermissionPrompt === true && !(inProject && basename2(file) === "settings.json")) {
       findings.push({
         id: "skip-danger-prompt",
         severity: "medium",
@@ -829,7 +917,7 @@ function checkPermissions(ctx, perms) {
       title: "Shell runs without a sandbox",
       detail: "Auto-approved commands have full access to your filesystem and network.",
       fix: 'Enable "sandbox": { "enabled": true } in Claude Code settings, or run the agent in a dev container.',
-      file: settingsFile
+      file: fileOf(bashRules)
     });
   }
   const hasHooks = ctx.claudeSettings.some((s) => s.data.hooks && Object.keys(s.data.hooks).length > 0);
@@ -862,9 +950,8 @@ function checkTrifecta(ctx, perms) {
   if (perms.exfilCommands.length) legs.exfil.auto.push("network commands");
   if (perms.interpreters.length) legs.exfil.headless.push("script interpreters");
   if (perms.webFetchUnrestricted) legs.exfil.auto.push("WebFetch (URL query params)");
-  const projectSecrets = ctx.secretFiles.filter((f) => f.startsWith(ctx.dir));
-  if (projectSecrets.length && !perms.envDenied) legs.private.auto.push("project secret files");
-  const homeSecrets = ctx.secretFiles.filter((f) => !f.startsWith(ctx.dir));
+  if (perms.readableSecrets.length) legs.private.auto.push("project secret files");
+  const homeSecrets = ctx.secretFiles.filter((f) => !inDir(f, ctx.dir));
   if (homeSecrets.length && perms.bashUnrestricted) legs.private[shellLeg].push("~/.ssh, ~/.aws and other home credentials");
   for (const server of ctx.mcpServers) {
     const auto2 = server.client === "claude-code" && isMcpAutoApproved(server.name, perms);
@@ -919,7 +1006,8 @@ function list(leg) {
 // src/checks/workflows.ts
 var AGENT_STEP = /anthropics\/claude-code(-base)?-action|\bclaude\s+(-p|--print)\b|@anthropic-ai\/claude-code|openai\/codex-action|\bcodex\s+exec\b|google-github-actions\/run-gemini-cli|\bgemini\s+(-p|--prompt)\b/;
 var CHECKED_ACTION = /anthropics\/claude-code-action@|openai\/codex-action@/;
-var ACTOR_GATE = /author_association|github\.(actor|triggering_actor)\s*[!=]=|(sender|user)\.login\s*[!=]=|check-user-permission|getCollaboratorPermissionLevel|\/collaborators\/|permission\s*[!=]=\s*['"]?(admin|write|maintain)|allowed_?users|authorized_?users|\.includes\(\s*(context\.)?(actor|sender|github\.actor)|github\.event\.pull_request\.merged|(?<!!\s*)contains\(\s*github\.event\.(issue|pull_request)\.labels/i;
+var ACTOR_GATE = /author_association\s*==|,\s*github\.event\.[\w.]*author_association\s*\)|includes\([^)]*author_association|github\.(actor|triggering_actor)\s*==|(sender|user)\.login\s*==|check-user-permission|getCollaboratorPermissionLevel|\/collaborators\/|permission\s*[!=]=\s*['"]?(admin|write|maintain)|allowed_?users|authorized_?users|\.includes\(\s*(context\.)?(actor|sender|github\.actor)|github\.event\.pull_request\.merged|(?<!!\s*)contains\(\s*github\.event\.(issue|pull_request)\.labels/i;
+var ALLOWLISTED_ROLES = /author_association[\s\S]*\b(OWNER|MEMBER|COLLABORATOR)\b[\s\S]*\b(OWNER|MEMBER|COLLABORATOR)\b/;
 var MAINTAINER_TYPES = ["labeled", "unlabeled", "assigned", "milestoned"];
 var UNTRUSTED_EVENTS = ["pull_request_target", "workflow_run", "issue_comment", "issues", "discussion_comment", "discussion", "pull_request_review_comment", "pull_request_review"];
 var SKIP_PERMISSIONS = /--dangerously-skip-permissions|--permission-mode[\s=]+["']?bypassPermissions|permission_mode:\s*["']?bypassPermissions/;
@@ -930,7 +1018,7 @@ function checkWorkflows(ctx) {
   const findings = [];
   for (const wf of ctx.workflows) {
     const text = stripComments(wf.content);
-    const rel = wf.file.slice(ctx.dir.length + 1);
+    const rel = relPath(ctx.dir, wf.file);
     const key = text.match(API_KEY);
     if (key) {
       findings.push({
@@ -947,7 +1035,7 @@ function checkWorkflows(ctx) {
     const found = [];
     const maintainerOnly = (e) => (on.get(e) ?? []).length > 0 && on.get(e).every((t) => MAINTAINER_TYPES.includes(t));
     const untrusted = [...on.keys()].filter((e) => UNTRUSTED_EVENTS.includes(e) && !maintainerOnly(e));
-    const gated = ACTOR_GATE.test(text);
+    const gated = ACTOR_GATE.test(text) || ALLOWLISTED_ROLES.test(text);
     const workflowWrites = /contents:\s*write|permissions:\s*write-all/.test(text.split(/^jobs:/m)[0]);
     for (const job of splitJobs(text).filter((j) => AGENT_STEP.test(j))) {
       const nonWrite = job.match(/allowed_non_write_users:[ \t]*(.*)$/m)?.[1].replace(/^["']|["']$/g, "").trim() || void 0;
@@ -1103,6 +1191,12 @@ function stripComments(yaml) {
   return yaml.split("\n").map((l) => l.replace(/(^|\s)#.*$/, "")).join("\n");
 }
 
+// src/text.ts
+var UNSAFE = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]", "g");
+function sanitize(s) {
+  return s.replace(UNSAFE, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 // src/scan.ts
 var PENALTY = { critical: 30, high: 12, medium: 5, low: 1 };
 var ORDER = ["critical", "high", "medium", "low"];
@@ -1118,7 +1212,7 @@ function evaluate(ctx) {
     ...checkCodex(ctx),
     ...checkInstructions(ctx),
     ...checkWorkflows(ctx)
-  ].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
+  ].map(safe).sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
   const score = Math.max(0, 100 - findings.reduce((sum, f) => sum + PENALTY[f.severity], 0));
   return {
     dir: ctx.dir,
@@ -1140,6 +1234,9 @@ function grade(score) {
   if (score >= 60) return "C";
   if (score >= 40) return "D";
   return "F";
+}
+function safe(f) {
+  return { ...f, title: sanitize(f.title), detail: sanitize(f.detail), fix: sanitize(f.fix), file: f.file && sanitize(f.file) };
 }
 
 // src/mcp.ts
@@ -1218,14 +1315,14 @@ import { createInterface as createInterface2 } from "node:readline/promises";
 // src/fix.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { dirname, join as join4 } from "node:path";
+import { dirname as dirname2, join as join4 } from "node:path";
 var AUTO_IDS = /* @__PURE__ */ new Set(["secrets-readable", "wallet-keys-readable", "auto-project-mcp", "skip-danger-prompt", "mcp-unpinned"]);
 var ENV_DENY = ["Read(./.env)", "Read(./.env.*)"];
-var RUNNERS2 = /* @__PURE__ */ new Set(["npx", "bunx", "pnpx"]);
+var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx", "pnpx"]);
 var npmVersion = (pkg) => {
   try {
     const out = execFileSync("npm", ["view", pkg, "version"], { encoding: "utf8", timeout: 2e4, stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return /^\d+\.\d+\.\d+/.test(out) ? out : void 0;
+    return /^\d+\.\d+\.\d+[\w.+-]*$/.test(out) ? out : void 0;
   } catch {
     return void 0;
   }
@@ -1233,67 +1330,82 @@ var npmVersion = (pkg) => {
 function planFixes(ctx, findings, lookup = npmVersion) {
   const files = /* @__PURE__ */ new Map();
   const skipped = [];
-  const isGlobal = (file) => !file.startsWith(ctx.dir + "/");
+  const unresolved = /* @__PURE__ */ new Set();
+  const isGlobal = (file) => !inDir(file, ctx.dir);
   const edit = (file, change, apply) => {
     const plan = files.get(file) ?? { file, global: isGlobal(file), before: readText2(file), after: "", changes: [] };
     const current = plan.changes.length ? plan.after : plan.before;
     const next = apply(current);
-    if (next === void 0 || next === current) return;
+    if (next === void 0) {
+      skipped.push(`Could not edit ${relPath(ctx.dir, file)} safely (comments or invalid JSON); change it by hand`);
+      return false;
+    }
+    if (next === current) return true;
     plan.after = next;
     plan.changes.push(change);
     files.set(file, plan);
+    return true;
   };
-  const ids = new Set(findings.map((f) => f.id));
-  if (ids.has("secrets-readable") || ids.has("wallet-keys-readable")) {
-    edit(join4(ctx.dir, ".claude/settings.json"), "Deny the agent reading .env files", (text) => updateJson(text, (data) => {
+  const byId = (id) => findings.filter((f) => f.id === id);
+  const perms = readPermissions(ctx);
+  const secretFindings = [...byId("secrets-readable"), ...byId("wallet-keys-readable")];
+  if (secretFindings.length) {
+    const rules = [...new Set(perms.readableSecrets.flatMap((f) => {
+      const name = relPath(ctx.dir, f);
+      return name.startsWith(".env") ? ENV_DENY : [`Read(./${name})`];
+    }))];
+    const names = perms.readableSecrets.map((f) => relPath(ctx.dir, f)).join(", ");
+    const ok = edit(join4(ctx.dir, ".claude/settings.json"), `Deny the agent reading ${names}`, (text) => updateJson(text, (data) => {
       data.permissions ??= {};
       const deny = Array.isArray(data.permissions.deny) ? data.permissions.deny : [];
-      for (const rule of ENV_DENY) if (!deny.includes(rule)) deny.push(rule);
+      for (const rule of rules) if (!deny.includes(rule)) deny.push(rule);
       data.permissions.deny = deny;
     }));
     const usesCursor = existsSync2(join4(ctx.dir, ".cursor")) || existsSync2(join4(ctx.dir, ".cursorrules"));
-    if (usesCursor) {
+    if (usesCursor && perms.readableSecrets.some((f) => relPath(ctx.dir, f).startsWith(".env"))) {
       edit(join4(ctx.dir, ".cursorignore"), "Keep .env files out of Cursor", (text = "") => /^\.env\*?\s*$/m.test(text) ? text : `${text}${text && !text.endsWith("\n") ? "\n" : ""}# added by agent-crashtest
 .env*
 `);
     }
+    if (!ok || perms.shellCanRead) secretFindings.forEach((f) => unresolved.add(f));
   }
-  for (const key of ["enableAllProjectMcpServers", "skipDangerousModePermissionPrompt"]) {
-    if (!ids.has(key === "enableAllProjectMcpServers" ? "auto-project-mcp" : "skip-danger-prompt")) continue;
-    for (const { file, data } of ctx.claudeSettings) {
-      if (data[key] !== true) continue;
-      edit(file, `Remove "${key}"`, (text) => updateJson(text, (d) => {
+  for (const [id, key] of [["auto-project-mcp", "enableAllProjectMcpServers"], ["skip-danger-prompt", "skipDangerousModePermissionPrompt"]]) {
+    for (const f of byId(id)) {
+      const ok = f.file !== void 0 && edit(f.file, `Remove "${key}"`, (text) => updateJson(text, (d) => {
         delete d[key];
       }));
+      if (!ok) unresolved.add(f);
     }
   }
-  if (ids.has("mcp-unpinned")) {
-    for (const s of ctx.mcpServers) {
-      const runner = s.command?.split("/").pop();
-      if (!runner || !RUNNERS2.has(runner) || s.client === "codex" || /\.vscode\/|\.claude\.json$/.test(s.file)) continue;
-      const i = s.args.findIndex((a) => !a.startsWith("-"));
-      const pkg = i >= 0 ? s.args[i] : void 0;
-      if (!pkg || /^[./]/.test(pkg) || !isUnpinned2(pkg)) continue;
-      const name = stripVersion2(pkg);
-      const version2 = lookup(name);
-      if (!version2) {
-        skipped.push(`Could not look up the latest version of ${name} for MCP server "${s.name}"`);
-        continue;
-      }
-      edit(s.file, `Pin MCP server "${s.name}" to ${name}@${version2}`, (text) => updateJson(text, (data) => {
-        const server = findServer(data, s.name, ctx.dir);
-        if (server && Array.isArray(server.args) && server.args[i] === pkg) server.args[i] = `${name}@${version2}`;
-      }));
+  for (const f of byId("mcp-unpinned")) {
+    const s = ctx.mcpServers.find((m) => m.file === f.file && f.title.includes(`"${m.name}"`));
+    const spec = s && packageSpec(s);
+    if (!s || !spec || !NPM_RUNNERS.has(spec.runner) || s.client === "codex" || /[\\/]\.vscode[\\/]|\.claude\.json$/.test(s.file) || !isUnpinned(spec.spec)) {
+      unresolved.add(f);
+      continue;
     }
+    const { index: i, prefix, spec: pkg } = spec;
+    const name = stripVersion(pkg);
+    const version2 = lookup(name);
+    if (!version2) {
+      skipped.push(`Could not look up the latest version of ${name} for MCP server "${s.name}"`);
+      unresolved.add(f);
+      continue;
+    }
+    const ok = edit(s.file, `Pin MCP server "${s.name}" to ${name}@${version2}`, (text) => updateJson(text, (data) => {
+      const server = findServer(data, s.name, ctx.dir);
+      if (server && Array.isArray(server.args) && server.args[i] === prefix + pkg) server.args[i] = `${prefix}${name}@${version2}`;
+    }));
+    if (!ok) unresolved.add(f);
   }
-  const manual = findings.filter((f) => !AUTO_IDS.has(f.id) || f.id === "mcp-unpinned" && !coveredByPlan(f, files));
+  const manual = findings.filter((f) => !AUTO_IDS.has(f.id) || unresolved.has(f));
   return { files: [...files.values()], manual, skipped };
 }
 function applyPlan(plan, includeGlobal) {
   const written = [];
   for (const f of plan.files) {
     if (f.global && !includeGlobal) continue;
-    mkdirSync3(dirname(f.file), { recursive: true });
+    mkdirSync3(dirname2(f.file), { recursive: true });
     writeFileSync3(f.file, f.after);
     written.push(f);
   }
@@ -1325,10 +1437,6 @@ function diff(before, after) {
   });
   return out;
 }
-function coveredByPlan(f, files) {
-  const server = f.title.match(/"(.+)"/)?.[1];
-  return [...files.values()].some((p) => p.changes.some((c2) => c2.startsWith(`Pin MCP server "${server}"`)));
-}
 function updateJson(text, mutate) {
   let data = {};
   if (text !== void 0 && text.trim()) {
@@ -1343,16 +1451,6 @@ function updateJson(text, mutate) {
 }
 function findServer(data, name, dir) {
   return data.mcpServers?.[name] ?? data.projects?.[dir]?.mcpServers?.[name] ?? data.servers?.[name];
-}
-function isUnpinned2(pkg) {
-  const at = pkg.lastIndexOf("@");
-  if (at <= 0) return true;
-  const version2 = pkg.slice(at + 1);
-  return version2 === "latest" || version2 === "next" || /^[\^~]/.test(version2);
-}
-function stripVersion2(pkg) {
-  const at = pkg.lastIndexOf("@");
-  return at > 0 ? pkg.slice(0, at) : pkg;
 }
 function readText2(file) {
   try {
@@ -1435,17 +1533,13 @@ function wrap(text, indent, width = 92) {
   if (line.trim()) lines.push(pad + line.trim());
   return lines.join("\n");
 }
-function displayPath(file, dir, home) {
-  if (file.startsWith(dir + "/")) return file.slice(dir.length + 1);
-  return file.startsWith(home) ? "~" + file.slice(home.length) : file;
-}
 
 // src/fix-cli.ts
 async function runFix(opts, yes) {
   const before = evaluate(collect(opts));
   if (before.findings.some((f) => f.id === "mcp-unpinned")) console.log(c.dim("  Looking up current MCP server versions on npm\u2026"));
   const plan = planFixes(collect(opts), before.findings);
-  const show = (file) => file.startsWith(before.dir + "/") ? file.slice(before.dir.length + 1) : file.replace(opts.home, "~");
+  const show = (file) => displayPath(file, before.dir, opts.home);
   console.log(`
   ${c.bold("\u{1F4A5} agent-crashtest --fix")}   score ${c.bold(`${before.score}/100`)}
 `);

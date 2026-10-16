@@ -1,3 +1,4 @@
+import { inDir } from '../paths.js';
 import type { Context, Finding } from '../types.js';
 import { categorize, type McpCategory } from './mcp.js';
 import type { Permissions } from './permissions.js';
@@ -32,9 +33,8 @@ export function checkTrifecta(ctx: Context, perms: Permissions): Finding[] {
   if (perms.interpreters.length) legs.exfil.headless.push('script interpreters');
   if (perms.webFetchUnrestricted) legs.exfil.auto.push('WebFetch (URL query params)');
 
-  const projectSecrets = ctx.secretFiles.filter((f) => f.startsWith(ctx.dir));
-  if (projectSecrets.length && !perms.envDenied) legs.private.auto.push('project secret files');
-  const homeSecrets = ctx.secretFiles.filter((f) => !f.startsWith(ctx.dir));
+  if (perms.readableSecrets.length) legs.private.auto.push('project secret files');
+  const homeSecrets = ctx.secretFiles.filter((f) => !inDir(f, ctx.dir));
   if (homeSecrets.length && perms.bashUnrestricted) legs.private[shellLeg].push('~/.ssh, ~/.aws and other home credentials');
 
   for (const server of ctx.mcpServers) {

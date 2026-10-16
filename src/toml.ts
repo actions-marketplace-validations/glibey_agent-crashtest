@@ -1,7 +1,7 @@
 /**
  * Small TOML reader for agent config files (e.g. ~/.codex/config.toml). Supports tables, dotted and quoted
- * keys, strings, numbers, booleans, arrays (also multi-line) and inline tables. Not a full TOML parser:
- * dates and multi-line strings are read as plain strings or skipped.
+ * keys, strings (also multi-line), numbers, booleans, arrays (also multi-line) and inline tables. Not a full
+ * TOML parser: dates are read as plain strings, and a line it can't read is skipped rather than failing the file.
  */
 export function parseToml(text: string): Record<string, any> {
   const root: Record<string, any> = {};
@@ -20,18 +20,33 @@ export function parseToml(text: string): Record<string, any> {
 
     const eq = indexOutsideQuotes(line, '=');
     if (eq < 0) continue;
-    // Arrays and inline tables may continue on the next lines.
-    while (!balanced(line) && i + 1 < lines.length) line += ' ' + stripComment(lines[++i]).trim();
     const keys = splitKey(line.slice(0, eq));
+    let value: any;
+    const raw = lines[i].slice(lines[i].indexOf('=') + 1).trimStart();
+    const delim = raw.startsWith('"""') ? '"""' : raw.startsWith("'''") ? "'''" : undefined;
+    if (delim) {
+      // Multi-line string: consume raw lines up to the closing delimiter so its content is never parsed as TOML.
+      let text = raw.slice(3);
+      while (!text.includes(delim) && i + 1 < lines.length) text += '\n' + lines[++i];
+      value = text.slice(0, text.indexOf(delim) >= 0 ? text.indexOf(delim) : undefined).replace(/^\n/, '');
+    } else {
+      // Arrays and inline tables may continue on the next lines.
+      while (!balanced(line) && i + 1 < lines.length) line += ' ' + stripComment(lines[++i]).trim();
+      try { value = parseValue(line.slice(eq + 1).trim()); } catch { continue; }
+    }
     let target = table;
     for (const key of keys.slice(0, -1)) target = target[key] ??= {};
-    target[keys[keys.length - 1]] = parseValue(line.slice(eq + 1).trim());
+    target[keys[keys.length - 1]] = value;
   }
   return root;
 }
 
 function parseValue(v: string): any {
-  if (v.startsWith('"')) return JSON.parse(v.slice(0, closingQuote(v, 0) + 1));
+  if (v.startsWith('"')) {
+    const body = v.slice(0, closingQuote(v, 0) + 1);
+    // TOML escapes JSON lacks: \UXXXXXXXX and \e.
+    return JSON.parse(body.replace(/\\U([0-9a-fA-F]{8})/g, (_, h) => JSON.stringify(String.fromCodePoint(parseInt(h, 16))).slice(1, -1)).replace(/\\e/g, '\\u001b'));
+  }
   if (v.startsWith("'")) return v.slice(1, v.indexOf("'", 1));
   if (v === 'true' || v === 'false') return v === 'true';
   if (v.startsWith('[')) return splitTop(v.slice(1, v.lastIndexOf(']'))).map(parseValue);

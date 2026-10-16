@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline/promises';
 import { collect, type CollectOptions } from './collect.js';
 import { applyPlan, diff, planFixes, type FilePlan } from './fix.js';
 import { SEVERITIES } from './github.js';
+import { displayPath } from './paths.js';
 import { c } from './report.js';
 import { evaluate } from './scan.js';
 
@@ -10,7 +11,7 @@ export async function runFix(opts: CollectOptions, yes: boolean): Promise<void> 
   const before = evaluate(collect(opts));
   if (before.findings.some((f) => f.id === 'mcp-unpinned')) console.log(c.dim('  Looking up current MCP server versions on npm…'));
   const plan = planFixes(collect(opts), before.findings);
-  const show = (file: string) => file.startsWith(before.dir + '/') ? file.slice(before.dir.length + 1) : file.replace(opts.home, '~');
+  const show = (file: string) => displayPath(file, before.dir, opts.home);
 
   console.log(`\n  ${c.bold('💥 agent-crashtest --fix')}   score ${c.bold(`${before.score}/100`)}\n`);
   for (const f of plan.files) {

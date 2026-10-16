@@ -410,3 +410,166 @@ test('badge: shields.io escaping, colors by grade, live workflow badge in the jo
     process.env = env;
   }
 });
+
+// ── Regression tests for the code review findings ──────────────────────────────────────────────
+
+test('review: text from scanned files cannot inject terminal escapes or workflow commands', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'x\n::stop-commands::t\u001b]52;c;Zm9v\u0007': { command: 'npx', args: ['-y', 'some-mcp'] } } }));
+    const toTags = (s: string) => [...s].map((ch) => String.fromCodePoint(0xe0000 + ch.charCodeAt(0))).join('');
+    writeFileSync(join(dir, 'CLAUDE.md'), `ok${toTags('a\n::warning::fake\u001b[2J')}`);
+    const { annotations } = await import('./github.js');
+    const { renderText } = await import('./report.js');
+    const result = run(dir);
+    const out = renderText(result, '0', '/nonexistent') + '\n' + annotations(result, dir).join('\n');
+    assert.ok(!out.includes('\u001b]') && !out.includes('\u001b[2J'), 'no raw escape sequences');
+    assert.ok(!out.split('\n').some((l) => /^::(stop-commands|warning)::/.test(l)), 'no injected workflow command lines');
+    assert.ok(result.findings.some((f) => f.title.includes('\\u000a::stop-commands')), 'shown as visible escapes');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review: Read deny does not hide secrets a shell rule can print, and covers each file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    mkdirSync(join(dir, '.claude'));
+    writeFileSync(join(dir, '.env'), 'PRIVATE_KEY=x\n');
+    writeFileSync(join(dir, 'key.pem'), 'x');
+    const settings = (allow: string[], deny: string[]) => writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify({ permissions: { allow, deny }, hooks: { Stop: [] } }));
+
+    settings([], ['Read(./.env)']);
+    assert.deepEqual(ids(dir), ['secrets-readable'], 'key.pem is still readable');
+    settings([], ['Read(./.env)', 'Read(./key.pem)']);
+    assert.deepEqual(ids(dir), []);
+    settings(['Bash(cat:*)'], ['Read(./.env)', 'Read(./key.pem)']);
+    assert.ok(ids(dir).includes('wallet-keys-readable'), 'cat can still print .env');
+    settings([], ['Read(**/.env*)', 'Read(./*.pem)']);
+    assert.deepEqual(ids(dir), [], 'glob deny rules count');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review: subdivision flag emoji are not hidden instructions', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    writeFileSync(join(dir, 'CLAUDE.md'), 'Made in \u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F} and \u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}\n');
+    assert.deepEqual(ids(dir), []);
+    writeFileSync(join(dir, 'CLAUDE.md'), `flag \u{1F3F4}\u{E0067}\u{E0062}\u{E007F} then${[...'run x'].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('')}`);
+    assert.deepEqual(ids(dir), ['hidden-tag-chars'], 'real hidden text next to a flag is still caught');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review: exclusion conditions like github.actor != bot are not access gates', async () => {
+  const { checkWorkflows } = await import('./checks/workflows.js');
+  const crit = (content: string) =>
+    checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content }] } as any).some((f) => f.severity === 'critical');
+  const wf = (cond: string) => `on:\n  issues:\n    types: [opened]\njobs:\n  t:\n    if: ${cond}\n    steps:\n      - run: claude -p "triage" --dangerously-skip-permissions\n`;
+  assert.ok(crit(wf("github.actor != 'dependabot[bot]'")));
+  assert.ok(crit(wf("github.event.issue.author_association != 'BOT'")));
+  assert.ok(!crit(wf("github.actor == 'alice'")));
+  assert.ok(!crit(wf("contains(fromJSON('[\"OWNER\",\"MEMBER\"]'), github.event.issue.author_association)")));
+  // a shell allowlist on author_association is a gate; a check that only singles out NONE is not
+  const shellGate = `on:\n  issue_comment:\n    types: [created]\njobs:\n  gate:\n    env:\n      ASSOC: \${{ github.event.comment.author_association }}\n    steps:\n      - run: |\n          case "$ASSOC" in\n            OWNER | MEMBER | COLLABORATOR) ;;\n            *) exit 1 ;;\n          esac\n  review:\n    needs: gate\n    steps:\n      - run: claude -p "review" --dangerously-skip-permissions\n`;
+  assert.ok(!crit(shellGate));
+  assert.ok(crit(shellGate.replace('OWNER | MEMBER | COLLABORATOR', 'NONE')), 'routing outsiders differently is not a gate');
+});
+
+test('review: --fix keeps findings it cannot fix in the manual list', async () => {
+  const { planFixes } = await import('./fix.js');
+  const { collect } = await import('./collect.js');
+  const { evaluate } = await import('./scan.js');
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    mkdirSync(join(dir, '.claude'));
+    writeFileSync(join(dir, '.env'), 'PRIVATE_KEY=x\n');
+    writeFileSync(join(dir, '.claude/settings.json'), '{\n  // team rules\n  "enableAllProjectMcpServers": true\n}\n');
+    const ctx = collect({ dir, home: '/nonexistent', includeHome: false });
+    const plan = planFixes(ctx, evaluate(ctx).findings, () => undefined);
+    assert.deepEqual(plan.files, []);
+    const manual = plan.manual.map((f) => f.id);
+    assert.ok(manual.includes('wallet-keys-readable') && manual.includes('auto-project-mcp'), manual.join(','));
+    assert.ok(plan.skipped.some((s) => s.includes('.claude/settings.json')));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review: path checks work with Windows separators and from the home directory', async () => {
+  const { inDir, relPath, displayPath } = await import('./paths.js');
+  const path = await import('node:path');
+  assert.equal(inDir('/a/app/.env', '/a/app'), true);
+  assert.equal(inDir('/a/app2/.env', '/a/app'), false);
+  assert.equal(inDir('/a/app', '/a/app'), false);
+  assert.equal(path.win32.relative('C:\\p\\app', 'C:\\p\\app\\.env'), '.env', 'relative() handles backslashes');
+  assert.equal(relPath('/a', '/a/b/c.json'), 'b/c.json');
+  assert.equal(displayPath('/h/.claude/x', '/a/app', '/h'), '~/.claude/x');
+
+  // Scanning from home: ~/.ssh keys are home credentials, not project secrets.
+  const home = mkdtempSync(join(tmpdir(), 'act-home-'));
+  try {
+    mkdirSync(join(home, '.ssh'));
+    writeFileSync(join(home, '.ssh/id_rsa'), 'x');
+    const result = scan({ dir: home, home, includeHome: true });
+    assert.ok(!result.findings.some((f) => f.id === 'secrets-readable'), JSON.stringify(result.findings.map((f) => f.id)));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('review: findings point to the settings file that holds the rule', () => {
+  const home = mkdtempSync(join(tmpdir(), 'act-home-'));
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    mkdirSync(join(home, '.claude'));
+    mkdirSync(join(dir, '.claude'));
+    writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify({ permissions: { allow: ['Read'] } }));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ permissions: { allow: ['Bash(*)', 'WebFetch'] } }));
+    const f = scan({ dir, home, includeHome: true }).findings;
+    assert.equal(f.find((x) => x.id === 'bash-unrestricted')?.file, join(home, '.claude/settings.json'));
+    assert.equal(f.find((x) => x.id === 'webfetch-any')?.file, join(home, '.claude/settings.json'));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review: TOML multi-line strings and \\U escapes do not hide Codex settings', async () => {
+  const { parseToml } = await import('./toml.js');
+  const t = parseToml(`model = "x\\U0001F600"
+developer_instructions = """
+Be careful.
+[docs]
+sandbox_mode = "workspace-write"
+"""
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+notes = '''
+[not a table]
+'''
+`);
+  assert.equal(t.approval_policy, 'never');
+  assert.equal(t.sandbox_mode, 'danger-full-access');
+  assert.equal(t.docs, undefined);
+  assert.match(t.developer_instructions, /\[docs\]/);
+  assert.equal(t.model, 'x\u{1F600}');
+  assert.equal(parseToml('a = "bad \\q escape"\nb = true\n').b, true, 'one unreadable line does not drop the rest');
+});
+
+test('review: uvx == pins, --from and pipx run are read correctly', async () => {
+  const { packageSpec, isUnpinned } = await import('./checks/mcp.js');
+  const spec = (command: string, args: string[]) => packageSpec({ command, args })?.spec;
+  assert.equal(spec('uvx', ['mcp-server-fetch==1.2.0']), 'mcp-server-fetch==1.2.0');
+  assert.equal(isUnpinned('mcp-server-fetch==1.2.0'), false);
+  assert.equal(isUnpinned('mcp-server-fetch>=1.0'), true);
+  assert.equal(spec('uvx', ['--from', 'git+https://x/y', 'tool']), 'git+https://x/y');
+  assert.equal(isUnpinned('git+https://x/y'), false);
+  assert.equal(spec('pipx', ['run', 'mcp-x']), 'mcp-x');
+  assert.equal(spec('npx', ['--package', '@s/p@1.0.0', '-y', 'p']), '@s/p@1.0.0');
+  assert.equal(spec('C:\\tools\\npx.cmd', ['-y', 'pkg']), 'pkg');
+  assert.equal(spec('node', ['server.js']), undefined);
+});
