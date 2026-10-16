@@ -56,14 +56,22 @@ test('deny rule protects .env and pinned servers pass', () => {
   }
 });
 
-test('bypassPermissions is critical', () => {
+test('bypassPermissions is critical in user settings but ignored in project settings', () => {
   const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  const home = mkdtempSync(join(tmpdir(), 'act-home-'));
   try {
     mkdirSync(join(dir, '.claude'));
     writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
-    assert.ok(ids(dir).includes('bypass-permissions'));
+    assert.ok(ids(dir).includes('bypass-ignored'));
+    assert.ok(!ids(dir).includes('bypass-permissions'));
+
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
+    const userScope = scan({ dir, home, includeHome: true }).findings.map((f) => f.id);
+    assert.ok(userScope.includes('bypass-permissions'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

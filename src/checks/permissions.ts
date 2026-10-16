@@ -4,6 +4,8 @@ export interface Permissions {
   allow: string[];
   deny: string[];
   bypass: boolean;
+  /** Project file that asks for bypassPermissions, which Claude Code ignores since v2.1.257. */
+  bypassIgnoredFile?: string;
   bashUnrestricted: boolean;
   exfilCommands: string[];
   interpreters: string[];
@@ -21,16 +23,21 @@ export function readPermissions(ctx: Context): Permissions {
   const allow: string[] = [];
   const deny: string[] = [];
   let bypass = false;
-  for (const { data } of ctx.claudeSettings) {
+  let bypassIgnoredFile: string | undefined;
+  for (const { file, data } of ctx.claudeSettings) {
     const p = data.permissions ?? {};
     if (Array.isArray(p.allow)) allow.push(...p.allow.map(String));
     if (Array.isArray(p.deny)) deny.push(...p.deny.map(String));
-    if (p.defaultMode === 'bypassPermissions') bypass = true;
+    if (p.defaultMode === 'bypassPermissions') {
+      if (isProjectFile(ctx, file)) bypassIgnoredFile = file;
+      else bypass = true;
+    }
   }
   return {
     allow,
     deny,
     bypass,
+    bypassIgnoredFile,
     bashUnrestricted: bypass || allow.some((r) => /^Bash(\(\*(:\*)?\))?$/.test(r.trim())),
     exfilCommands: allow.filter(isExfilRule),
     interpreters: allow.filter(isInterpreterRule),
@@ -39,6 +46,16 @@ export function readPermissions(ctx: Context): Permissions {
     envDenied: deny.some((r) => /^Read\([^)]*\.env/.test(r) || /^Read\(\*\*\)$/.test(r)),
   };
 }
+
+function isProjectFile(ctx: Context, file: string): boolean {
+  return file.startsWith(ctx.dir + '/');
+}
+
+// Claude Code facts these checks rely on (docs, v2.1.300):
+// - auto mode (the interactive default) drops Bash(*) and wildcard interpreter rules, but keeps the rest;
+// - claude -p, the Agent SDK and CI start in Manual mode, skip the workspace-trust prompt and load .mcp.json servers;
+// - bypassPermissions in a project or local settings file is ignored.
+const HEADLESS_NOTE = 'Auto mode drops this rule in interactive sessions, but Manual mode and every headless run (claude -p, Agent SDK, CI) apply it with no one watching.';
 
 function bashCommand(rule: string): string | undefined {
   return rule.match(/^Bash\(([\s\S]*)\)$/)?.[1].trim();
@@ -73,18 +90,29 @@ export function checkPermissions(ctx: Context, perms: Permissions): Finding[] {
       id: 'bypass-permissions',
       severity: 'critical',
       title: 'Claude Code runs in bypassPermissions mode',
-      detail: 'Every tool call runs without asking. One poisoned README or web page is enough to take over the agent.',
+      detail: 'Your user or managed settings start every session with all checks off, in every project. One poisoned README or web page is enough to take over the agent.',
       fix: 'Remove "defaultMode": "bypassPermissions". Use it only inside a container or VM with no secrets.',
-      file: ctx.claudeSettings.find((s) => s.data.permissions?.defaultMode === 'bypassPermissions')?.file,
+      file: ctx.claudeSettings.find((s) => s.data.permissions?.defaultMode === 'bypassPermissions' && !isProjectFile(ctx, s.file))?.file,
     });
   } else if (perms.bashUnrestricted) {
     findings.push({
       id: 'bash-unrestricted',
-      severity: 'critical',
+      severity: 'high',
       title: 'Any shell command is auto-approved',
-      detail: 'An allow rule like "Bash" or "Bash(*)" lets injected instructions run curl, rm, or anything else silently.',
+      detail: `An allow rule like "Bash" or "Bash(*)" lets injected instructions run curl, rm, or anything else silently. ${HEADLESS_NOTE}`,
       fix: 'Replace it with narrow rules such as "Bash(npm test:*)" or "Bash(git status)".',
       file: settingsFile,
+    });
+  }
+
+  if (perms.bypassIgnoredFile) {
+    findings.push({
+      id: 'bypass-ignored',
+      severity: 'low',
+      title: 'Project settings ask for bypassPermissions',
+      detail: 'Claude Code ignores this in project and local settings since v2.1.257, but older versions run with every check off.',
+      fix: 'Remove "defaultMode": "bypassPermissions" from the project settings.',
+      file: perms.bypassIgnoredFile,
     });
   }
 
@@ -93,7 +121,7 @@ export function checkPermissions(ctx: Context, perms: Permissions): Finding[] {
       id: 'exfil-commands',
       severity: 'high',
       title: 'Network commands are auto-approved',
-      detail: `Allowed without asking: ${perms.exfilCommands.join(', ')}. These are a direct channel to send your data out.`,
+      detail: `Allowed without asking: ${perms.exfilCommands.join(', ')}. These are a direct channel to send your data out, and unlike "Bash(*)" they stay in effect in auto mode, so they skip the safety classifier.`,
       fix: 'Remove these allow rules, or limit them to exact URLs you trust.',
       file: settingsFile,
     });
@@ -104,7 +132,7 @@ export function checkPermissions(ctx: Context, perms: Permissions): Finding[] {
       id: 'interpreters',
       severity: 'high',
       title: 'Script interpreters are auto-approved',
-      detail: `Allowed without asking: ${perms.interpreters.join(', ')}. "python -c" or "node -e" can run any code, so this equals unrestricted shell.`,
+      detail: `Allowed without asking: ${perms.interpreters.join(', ')}. "python -c" or "node -e" can run any code, so this equals unrestricted shell. ${HEADLESS_NOTE}`,
       fix: 'Allow specific scripts ("Bash(node scripts/build.js)") instead of the whole interpreter.',
       file: settingsFile,
     });
@@ -143,17 +171,21 @@ export function checkPermissions(ctx: Context, perms: Permissions): Finding[] {
   }
 
   for (const { file, data } of ctx.claudeSettings) {
+    const inProject = isProjectFile(ctx, file);
     if (data.enableAllProjectMcpServers === true) {
       findings.push({
         id: 'auto-project-mcp',
-        severity: 'high',
-        title: 'Project MCP servers are enabled automatically',
-        detail: 'Any repo you clone can ship a .mcp.json that starts a server on your machine without asking.',
-        fix: 'Remove "enableAllProjectMcpServers": true and approve servers one by one.',
+        severity: inProject ? 'medium' : 'high',
+        title: inProject ? 'This repo approves its own MCP servers' : 'Every repo you open can start MCP servers',
+        detail: inProject
+          ? 'Once a contributor trusts the folder, every server in .mcp.json starts without asking. Headless runs (claude -p, Agent SDK, CI) load them with no prompt at all.'
+          : 'Your user settings approve the .mcp.json of any repo you trust, so a cloned repo can start a server on your machine without asking.',
+        fix: 'Remove "enableAllProjectMcpServers": true and list trusted servers in "enabledMcpjsonServers" instead.',
         file,
       });
     }
-    if (data.skipDangerousModePermissionPrompt === true) {
+    // Claude Code only reads this key from user, local or managed settings.
+    if (data.skipDangerousModePermissionPrompt === true && !(inProject && file.endsWith('/settings.json'))) {
       findings.push({
         id: 'skip-danger-prompt',
         severity: 'medium',
