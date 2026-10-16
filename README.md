@@ -1,5 +1,10 @@
 # 💥 agent-crashtest
 
+[![npm](https://img.shields.io/npm/v/agent-crashtest?color=cb3837)](https://www.npmjs.com/package/agent-crashtest)
+[![CI](https://github.com/glibey/agent-crashtest/actions/workflows/ci.yml/badge.svg)](https://github.com/glibey/agent-crashtest/actions/workflows/ci.yml)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-agent--crashtest-2ea44f?logo=github)](https://github.com/marketplace/actions/agent-crashtest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **How hackable is your AI coding agent?** One command, zero config, 100% local.
 
 ```bash
@@ -8,8 +13,9 @@ npx agent-crashtest
 
 <p align="center"><img src="docs/demo.svg" alt="agent-crashtest --demo output: score 0/100 with critical findings" width="820"></p>
 
-Claude Code, Cursor and MCP servers read web pages, READMEs, issues and emails — any of which can carry
-a prompt injection. `agent-crashtest` checks whether your setup would let that injection **steal your secrets**.
+Claude Code, Codex, Cursor and MCP servers read web pages, READMEs, issues and emails, and any of them can carry
+a prompt injection. `agent-crashtest` checks whether your setup would let that injection **run commands or steal your secrets**,
+and tells you exactly what to change.
 
 Try it on a deliberately broken project first:
 
@@ -17,16 +23,22 @@ Try it on a deliberately broken project first:
 npx agent-crashtest --demo
 ```
 
+**Use it where you work:** [terminal](#options) · [GitHub Actions](#github-action) · [Claude Code](#claude-code) · [Codex, Cursor and other agents](#codex-cursor-copilot-gemini-cli) · [any MCP client](#any-mcp-client)
+
 ## What it checks
 
 | Area | Examples |
 |---|---|
-| **Lethal trifecta** | untrusted input + private data + a way out, all auto-approved |
-| **Permissions** | `bypassPermissions`, `Bash(*)`, auto-approved `curl` / `python -c`, readable `.env` |
-| **MCP servers** | unpinned `npx`/`uvx` packages (rug pulls), plaintext tokens, auto-enabled project servers |
-| **Instruction files** | invisible Unicode-tag instructions in `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, skills |
+| **Lethal trifecta** | untrusted input + private data + a way out, all without asking you |
+| **Permissions** | `Bash(*)`, auto-approved `curl` / `python -c` / `gh api`, broad `WebFetch` |
+| **Secrets in reach** | readable `.env`; wallet `PRIVATE_KEY` / `MNEMONIC` flagged as critical (names only, values are never read out) |
+| **MCP servers** | unpinned `npx` / `uvx` packages (rug pulls), plaintext tokens, project servers enabled automatically |
+| **Instruction files** | invisible Unicode-tag instructions in `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, rules and skills |
+| **AI agents in CI** | anyone on GitHub can drive the agent (`allowed_non_write_users: "*"`, raw `claude -p` / `codex exec` on issues), `--dangerously-skip-permissions`, PR code checked out under `pull_request_target` |
+| **Codex** | `approval_policy = "never"` with `danger-full-access`, network access without approval, MCP servers in `config.toml` |
 
-Supported: Claude Code, Cursor, Codex (`config.toml`), Claude Desktop, VS Code (`.vscode/mcp.json`), and AI agents in GitHub Actions.
+Reads: Claude Code (`.claude/settings*.json`, `~/.claude.json`), Cursor (`.cursor/mcp.json`), Codex (`.codex/config.toml`),
+Claude Desktop, VS Code (`.vscode/mcp.json`), instruction files and skills, and `.github/workflows`.
 
 ## GitHub Action
 
@@ -53,9 +65,11 @@ The action builds from the ref you pin and never downloads the package at run ti
 
 ## Inside your agent: scan *and fix*
 
-The agent runs the scanner, explains each finding for your project, and fixes them one by one with your OK.
+The agent runs the scanner, explains each finding for your project, and fixes them one change at a time with your OK.
 
-**Claude Code** (plugin: skill + a warning at session start when something is critical)
+### Claude Code
+
+A plugin with the skill, plus a short warning at session start when something is critical (at most once a week per issue).
 
 ```
 /plugin install agent-crashtest --marketplace glibey/agent-crashtest
@@ -63,13 +77,17 @@ The agent runs the scanner, explains each finding for your project, and fixes th
 
 Then ask *"is my agent setup safe?"* or run `/agent-crashtest:crashtest`.
 
-**Codex, Cursor, Copilot, Gemini CLI and other agents with skills support**
+### Codex, Cursor, Copilot, Gemini CLI
+
+Any agent that supports the open [Agent Skills](https://github.com/vercel-labs/skills) format:
 
 ```bash
 npx skills add glibey/agent-crashtest
 ```
 
-**Any MCP client** (Cursor, Codex, Claude Desktop, Windsurf, VS Code): add a read-only `scan` tool.
+### Any MCP client
+
+Cursor, Codex, Claude Desktop, Windsurf, VS Code: add a read-only `scan` tool.
 
 ```json
 {
@@ -91,7 +109,7 @@ The version is pinned on purpose: an unpinned MCP server runs whatever gets publ
 
 ## For teams
 
-Rolling out Claude Code, Cursor or MCP across a team? We're building a Team version: a GitHub App for private repos,
+Rolling out Claude Code, Codex, Cursor or MCP across a team? We're building a Team version: a GitHub App for private repos,
 one policy file for what agents may do, a dashboard of agent setups across developers, and audit-ready reports.
 
 👉 **[Join the early access list](https://github.com/glibey/agent-crashtest/issues/1)**, free during the beta.
@@ -99,22 +117,37 @@ one policy file for what agents may do, a dashboard of agent setups across devel
 ## Options
 
 ```
---dir <path>     project to scan (default: cwd)
---project-only   skip global config in ~
---json           machine-readable output
---fail-on <lvl>   exit 1 on findings at or above: critical, high, medium, low
---ci             same as --fail-on high
---github         GitHub Actions mode: PR annotations, job summary, step outputs
---demo           scan a sample vulnerable project
+npx agent-crashtest [options]
+npx agent-crashtest mcp           run as an MCP server over stdio
+
+--dir <path>        project to scan (default: current directory)
+--project-only      skip global config in your home directory
+--json              machine-readable output
+--fail-on <level>   exit 1 on findings at or above: critical, high, medium, low
+--ci                same as --fail-on high
+--github            GitHub Actions mode: PR annotations, job summary, step outputs
+--demo              scan a deliberately vulnerable sample project
 ```
 
-## Privacy
+## Accuracy
 
-Nothing leaves your machine. No network calls, no telemetry. Secrets are masked in output.
+A security tool that cries wolf gets uninstalled. The rules were run against thousands of public repositories that commit
+agent config or run AI agents in CI, and every critical finding was reviewed by hand. Patterns that turned out safe, such as
+`Bash(npx eslint:*)`, `curl localhost`, allowlist-gated or schedule-only workflows, and defensive rules in `CLAUDE.md`,
+are regression tests now.
+
+Found a false positive or a missed risk? [Open an issue](https://github.com/glibey/agent-crashtest/issues/new).
+
+## Privacy and trust
+
+- The scan runs locally. No network calls, no telemetry. Secret values are never printed; `.env` files are read for variable names only.
+- No runtime dependencies.
+- npm releases are published from GitHub Actions with [provenance](https://docs.npmjs.com/generating-provenance-statements), so you can check each version was built from this repo.
 
 ## Roadmap
 
-- [ ] `--attack`: live crash test — runs your real agent against poisoned files in a sandbox with canary secrets
+- [ ] `--attack`: live crash test that runs your real agent against poisoned files in a sandbox with canary secrets
 - [ ] README badge with your grade
+- [ ] Team version ([early access](https://github.com/glibey/agent-crashtest/issues/1))
 
 MIT
