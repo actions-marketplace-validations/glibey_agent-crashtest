@@ -26,7 +26,7 @@ npx agent-crashtest --demo
 | **MCP servers** | unpinned `npx`/`uvx` packages (rug pulls), plaintext tokens, auto-enabled project servers |
 | **Instruction files** | invisible Unicode-tag instructions in `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, skills |
 
-Supported: Claude Code, Cursor, Claude Desktop, VS Code (`.vscode/mcp.json`).
+Supported: Claude Code, Cursor, Codex (`config.toml`), Claude Desktop, VS Code (`.vscode/mcp.json`), and AI agents in GitHub Actions.
 
 ## GitHub Action
 
@@ -50,6 +50,44 @@ jobs:
 
 Findings show up as annotations on the PR diff and as a table in the job summary. Outputs: `score`, `grade`, `critical`, `high`.
 The action builds from the ref you pin and never downloads the package at run time.
+
+## Inside your agent: scan *and fix*
+
+The agent runs the scanner, explains each finding for your project, and fixes them one by one with your OK.
+
+**Claude Code** (plugin: skill + a warning at session start when something is critical)
+
+```
+/plugin install agent-crashtest --marketplace glibey/agent-crashtest
+```
+
+Then ask *"is my agent setup safe?"* or run `/agent-crashtest:crashtest`.
+
+**Codex, Cursor, Copilot, Gemini CLI and other agents with skills support**
+
+```bash
+npx skills add glibey/agent-crashtest
+```
+
+**Any MCP client** (Cursor, Codex, Claude Desktop, Windsurf, VS Code): add a read-only `scan` tool.
+
+```json
+{
+  "mcpServers": {
+    "agent-crashtest": { "command": "npx", "args": ["-y", "agent-crashtest@0.3.0", "mcp"] }
+  }
+}
+```
+
+For Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.agent-crashtest]
+command = "npx"
+args = ["-y", "agent-crashtest@0.3.0", "mcp"]
+```
+
+The version is pinned on purpose: an unpinned MCP server runs whatever gets published next.
 
 ## For teams
 

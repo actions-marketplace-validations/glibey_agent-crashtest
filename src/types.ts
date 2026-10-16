@@ -9,7 +9,7 @@ export interface Finding {
   file?: string;
 }
 
-export type Client = 'claude-code' | 'cursor' | 'claude-desktop' | 'vscode';
+export type Client = 'claude-code' | 'cursor' | 'claude-desktop' | 'vscode' | 'codex';
 
 export interface McpServer {
   name: string;
@@ -43,4 +43,6 @@ export interface Context {
   envKeys: Record<string, string[]>;
   /** GitHub Actions workflow files in the project. */
   workflows: TextFile[];
+  /** Parsed Codex config.toml files (project and global). */
+  codexConfigs: SettingsFile[];
 }

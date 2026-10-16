@@ -1,4 +1,5 @@
 import { collect, type CollectOptions } from './collect.js';
+import { checkCodex } from './checks/codex.js';
 import { checkInstructions } from './checks/instructions.js';
 import { checkMcp } from './checks/mcp.js';
 import { checkPermissions, readPermissions } from './checks/permissions.js';
@@ -27,6 +28,7 @@ export function evaluate(ctx: Context): ScanResult {
     ...checkTrifecta(ctx, perms),
     ...checkPermissions(ctx, perms),
     ...checkMcp(ctx),
+    ...checkCodex(ctx),
     ...checkInstructions(ctx),
     ...checkWorkflows(ctx),
   ].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));

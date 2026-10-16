@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { createDemoProject } from './demo.js';
 import { failsAt, reportToGithub, SEVERITIES } from './github.js';
+import { sessionStartOutput } from './hook.js';
+import { serve } from './mcp.js';
 import { renderText } from './report.js';
 import { scan } from './scan.js';
 
@@ -12,6 +14,7 @@ const HELP = `
 
   Usage
     npx agent-crashtest [options]
+    npx agent-crashtest mcp          run as an MCP server (stdio) for Cursor, Codex, Claude Desktop…
 
   Options
     --dir <path>       project to scan (default: current directory)
@@ -31,7 +34,8 @@ const HELP = `
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-const { values } = parseArgs({
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
   options: {
     dir: { type: 'string' },
     'project-only': { type: 'boolean' },
@@ -39,6 +43,7 @@ const { values } = parseArgs({
     ci: { type: 'boolean' },
     'fail-on': { type: 'string' },
     github: { type: 'boolean' },
+    hook: { type: 'string' },
     demo: { type: 'boolean' },
     version: { type: 'boolean', short: 'v' },
     help: { type: 'boolean', short: 'h' },
@@ -54,26 +59,43 @@ if (values.version) {
   process.exit(0);
 }
 
-const failOn = values['fail-on'] ?? (values.ci ? 'high' : 'none');
-if (failOn !== 'none' && !SEVERITIES.includes(failOn as never)) {
-  console.error(`--fail-on must be one of: ${SEVERITIES.join(', ')}, none`);
-  process.exit(2);
+if (positionals[0] === 'mcp') serve(version);
+else if (values.hook === 'session-start') sessionStart();
+else run();
+
+/** Claude Code SessionStart hook: must be quiet, fast, and never break the session. */
+function sessionStart() {
+  try {
+    const out = sessionStartOutput(
+      scan({ dir: process.env.CLAUDE_PROJECT_DIR ?? values.dir ?? process.cwd(), home: homedir(), includeHome: true }),
+      process.env.CLAUDE_PLUGIN_DATA,
+    );
+    if (out) console.log(out);
+  } catch { /* a scanner bug must never block a session */ }
 }
 
-const home = homedir();
-const demoDir = values.demo ? createDemoProject() : undefined;
-try {
-  const result = scan({
-    dir: demoDir ?? values.dir ?? process.cwd(),
-    home,
-    includeHome: !values['project-only'] && !demoDir,
-  });
+function run() {
+  const failOn = values['fail-on'] ?? (values.ci ? 'high' : 'none');
+  if (failOn !== 'none' && !SEVERITIES.includes(failOn as never)) {
+    console.error(`--fail-on must be one of: ${SEVERITIES.join(', ')}, none`);
+    process.exit(2);
+  }
 
-  if (values.json) console.log(JSON.stringify(result, null, 2));
-  else console.log(renderText(result, version, home));
-  if (values.github) reportToGithub(result, version, result.dir);
+  const home = homedir();
+  const demoDir = values.demo ? createDemoProject() : undefined;
+  try {
+    const result = scan({
+      dir: demoDir ?? values.dir ?? process.cwd(),
+      home,
+      includeHome: !values['project-only'] && !demoDir,
+    });
 
-  if (failsAt(result, failOn)) process.exitCode = 1;
-} finally {
-  if (demoDir) rmSync(demoDir, { recursive: true, force: true });
+    if (values.json) console.log(JSON.stringify(result, null, 2));
+    else console.log(renderText(result, version, home));
+    if (values.github) reportToGithub(result, version, result.dir);
+
+    if (failsAt(result, failOn)) process.exitCode = 1;
+  } finally {
+    if (demoDir) rmSync(demoDir, { recursive: true, force: true });
+  }
 }

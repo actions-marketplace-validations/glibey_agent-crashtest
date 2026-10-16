@@ -112,7 +112,7 @@ async function main() {
           }
           if (content) workflows.push({ file: join(dir, h.path), content });
         }
-        const ctx: Context = { dir, home: '/nonexistent', includeHome: false, claudeSettings: [], mcpServers: [], instructionFiles: [], secretFiles: [], envKeys: {}, workflows };
+        const ctx: Context = { dir, home: '/nonexistent', includeHome: false, claudeSettings: [], mcpServers: [], instructionFiles: [], secretFiles: [], envKeys: {}, codexConfigs: [], workflows };
         const findings = checkWorkflows(ctx).map(({ id, severity, title }) => ({ id, severity, title: title.replace(dir + '/', '') }));
         rows.push({ repo, stars: starMap.get(repo) ?? 0, findings });
       } finally {

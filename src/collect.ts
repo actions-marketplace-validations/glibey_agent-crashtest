@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { parseToml } from './toml.js';
 import type { Client, Context, McpServer, SettingsFile, TextFile } from './types.js';
 
 const MAX_TEXT_BYTES = 256 * 1024;
@@ -35,16 +36,18 @@ export function collect(opts: CollectOptions): Context {
   }
 
   const secretFiles = collectSecrets(dir, home, includeHome);
+  const codexConfigs = collectCodex(dir, home, includeHome);
   return {
     dir,
     home,
     includeHome,
     claudeSettings,
-    mcpServers: collectMcp(dir, home, includeHome),
+    mcpServers: [...collectMcp(dir, home, includeHome), ...codexConfigs.flatMap(codexMcpServers)],
     instructionFiles: collectInstructions(dir, home, includeHome),
     secretFiles,
     envKeys: collectEnvKeys(dir, secretFiles),
     workflows: collectWorkflows(dir),
+    codexConfigs,
   };
 }
 
@@ -202,4 +205,33 @@ function collectEnvKeys(dir: string, secretFiles: string[]): Record<string, stri
     if (names.length) keys[file] = names;
   }
   return keys;
+}
+
+/** Codex reads ~/.codex/config.toml (or $CODEX_HOME) and, for trusted projects, .codex/config.toml. */
+function collectCodex(dir: string, home: string, includeHome: boolean): SettingsFile[] {
+  const files = [join(dir, '.codex/config.toml')];
+  if (includeHome) files.push(join(process.env.CODEX_HOME ?? join(home, '.codex'), 'config.toml'));
+  const out: SettingsFile[] = [];
+  for (const file of files) {
+    const text = readText(file);
+    if (text === undefined) continue;
+    try { out.push({ file, data: parseToml(text) }); } catch { /* unreadable config is skipped */ }
+  }
+  return out;
+}
+
+function codexMcpServers({ file, data }: SettingsFile): McpServer[] {
+  const map = data.mcp_servers;
+  if (!map || typeof map !== 'object') return [];
+  return Object.entries(map as Record<string, any>)
+    .filter(([, cfg]) => cfg && typeof cfg === 'object')
+    .map(([name, cfg]) => ({
+      name,
+      client: 'codex' as const,
+      file,
+      command: typeof cfg.command === 'string' ? cfg.command : undefined,
+      args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
+      url: typeof cfg.url === 'string' ? cfg.url : undefined,
+      env: cfg.env && typeof cfg.env === 'object' ? stringMap(cfg.env) : {},
+    }));
 }

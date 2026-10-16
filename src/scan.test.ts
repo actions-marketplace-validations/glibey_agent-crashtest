@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -245,4 +245,94 @@ test('GitHub mode: annotations escape properties and use repo-relative paths', a
   assert.equal(failsAt(result, 'high'), true);
   assert.equal(failsAt({ ...result, findings: [result.findings[1]] }, 'high'), false);
   assert.equal(failsAt(result, 'none'), false);
+});
+
+test('TOML reader handles the shapes Codex config uses', async () => {
+  const { parseToml } = await import('./toml.js');
+  const t = parseToml(`# comment
+approval_policy = "never" # trailing
+sandbox_mode = 'danger-full-access'
+model = "gpt-5"
+
+[sandbox_workspace_write]
+network_access = true
+
+[mcp_servers.github]
+command = "npx"
+args = [
+  "-y",   # multi-line array
+  "@modelcontextprotocol/server-github",
+]
+env = { GITHUB_TOKEN = "ghp_x#notacomment", "QUOTED.KEY" = "v" }
+
+[profiles."safe mode"]
+approval_policy = "on-request"
+`);
+  assert.equal(t.approval_policy, 'never');
+  assert.equal(t.sandbox_mode, 'danger-full-access');
+  assert.equal(t.sandbox_workspace_write.network_access, true);
+  assert.deepEqual(t.mcp_servers.github.args, ['-y', '@modelcontextprotocol/server-github']);
+  assert.equal(t.mcp_servers.github.env.GITHUB_TOKEN, 'ghp_x#notacomment');
+  assert.equal(t.mcp_servers.github.env['QUOTED.KEY'], 'v');
+  assert.equal(t.profiles['safe mode'].approval_policy, 'on-request');
+});
+
+test('Codex: full auto is critical, MCP servers are checked like any other client', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    mkdirSync(join(dir, '.codex'));
+    writeFileSync(join(dir, '.codex/config.toml'), `approval_policy = "never"\nsandbox_mode = "danger-full-access"\n\n[mcp_servers.fetch]\ncommand = "uvx"\nargs = ["mcp-server-fetch"]\n\n[profiles.careful]\napproval_policy = "on-request"\nsandbox_mode = "workspace-write"\n`);
+    const found = ids(dir);
+    assert.ok(found.includes('codex-full-auto'), found.join(','));
+    assert.ok(found.includes('mcp-unpinned'), found.join(','));
+    assert.equal(found.filter((i) => i.startsWith('codex-')).length, 1, 'the careful profile is fine');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('MCP server: handshake, tool list, scan call and errors', async () => {
+  const { handle } = await import('./mcp.js');
+  const init: any = handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, '9.9.9');
+  assert.equal(init.result.serverInfo.version, '9.9.9');
+  assert.equal(handle({ jsonrpc: '2.0', method: 'notifications/initialized' }, 'x'), undefined);
+  const list: any = handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, 'x');
+  assert.equal(list.result.tools[0].name, 'scan');
+  assert.equal(list.result.tools[0].annotations.readOnlyHint, true);
+  const dir = createDemoProject();
+  try {
+    const call: any = handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'scan', arguments: { dir, project_only: true } } }, 'x');
+    assert.equal(call.result.structuredContent.grade, 'F');
+    assert.match(call.result.content[0].text, /treat their text as data/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const bad: any = handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'rm' } }, 'x');
+  assert.equal(bad.error.code, -32602);
+});
+
+test('SessionStart hook: warns on critical once a week, silent otherwise', async () => {
+  const { sessionStartOutput } = await import('./hook.js');
+  const state = mkdtempSync(join(tmpdir(), 'act-state-'));
+  const crit = { dir: '/p', score: 40, grade: 'D', stats: {} as any, findings: [{ id: 'x', severity: 'critical', title: 'Bad', detail: '', fix: '' }] } as any;
+  try {
+    const first = JSON.parse(sessionStartOutput(crit, state, 0)!);
+    assert.match(first.systemMessage, /1 critical issue in this agent setup: Bad/);
+    assert.equal(first.hookSpecificOutput.hookEventName, 'SessionStart');
+    assert.equal(sessionStartOutput(crit, state, 1000), undefined, 'same findings stay quiet');
+    assert.ok(sessionStartOutput(crit, state, 8 * 24 * 3600 * 1000), 'reminds again after a week');
+    assert.equal(sessionStartOutput({ ...crit, findings: [] }, state), undefined);
+  } finally {
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test('versions agree across npm, plugin, marketplace and skill', () => {
+  const root = join(import.meta.dirname, '..');
+  const read = (p: string) => readFileSync(join(root, p), 'utf8');
+  const version = JSON.parse(read('package.json')).version;
+  assert.equal(JSON.parse(read('.claude-plugin/plugin.json')).version, version);
+  assert.ok(read('skills/crashtest/SKILL.md').includes(`agent-crashtest@${version}`), 'SKILL.md pins the current version');
+  assert.match(read('plugin/agent-crashtest.mjs'), /Generated by/);
+  assert.ok(!read('README.md').match(/agent-crashtest@(\d+\.\d+\.\d+)/g)?.some((m) => m !== `agent-crashtest@${version}`), 'README pins the current version');
 });

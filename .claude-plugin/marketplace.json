@@ -1,0 +1,13 @@
+{
+  "name": "agent-crashtest",
+  "owner": { "name": "Sergiy Glibey", "url": "https://github.com/glibey" },
+  "description": "agent-crashtest: security crash test for AI coding agent setups.",
+  "plugins": [
+    {
+      "name": "agent-crashtest",
+      "source": "./",
+      "description": "Finds and fixes prompt-injection risks in your AI agent setup, and warns at session start when something is critical.",
+      "category": "security"
+    }
+  ]
+}

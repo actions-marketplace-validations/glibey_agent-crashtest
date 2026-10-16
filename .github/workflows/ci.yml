@@ -18,6 +18,8 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm test
+      - name: Plugin bundle matches the source
+        run: npm run build:plugin && git diff --exit-code plugin/
 
   action:
     runs-on: ubuntu-latest
