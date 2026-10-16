@@ -180,3 +180,50 @@ test('CI: an empty allowed_non_write_users keeps the write check on', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('CI: false positives found in public-repo research stay quiet', async () => {
+  const { checkWorkflows } = await import('./checks/workflows.js');
+  const run = (content: string) =>
+    checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content }] } as any)
+      .filter((f) => f.severity === 'critical' || f.severity === 'high')
+      .map((f) => f.id);
+  const action = (extra: string) => `      - uses: anthropics/claude-code-action@v1\n        with:\n${extra}`;
+
+  // schedule-only: allowed_non_write_users has no outsider input to act on
+  assert.deepEqual(run(`on:\n  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\njobs:\n  t:\n    steps:\n${action(`          allowed_non_write_users: '*'\n          claude_args: --allowedTools "Bash,Read"`)}`), []);
+
+  // allowlist check in a separate gate job: still HIGH (no permission checks), but not CRITICAL
+  const gated = `on:\n  issues:\n    types: [opened]\njobs:\n  gate:\n    steps:\n      - uses: actions/github-script@v7\n        with:\n          script: |\n            const allowedUsers = ['alice'];\n  agent:\n    steps:\n      - run: claude -p "fix" --dangerously-skip-permissions\n`;
+  assert.deepEqual(run(gated), ['ci-skip-permissions']);
+  assert.ok(!checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content: gated }] } as any).some((f) => f.severity === 'critical'));
+
+  // only merged PRs reach the agent
+  assert.deepEqual(run(`on:\n  pull_request_target:\n    types: [closed]\njobs:\n  b:\n    if: github.event.pull_request.merged\n    steps:\n      - run: claude -p "backport" --allowedTools "Read"\n`), []);
+
+  // broad tools in a job without allowed_non_write_users do not make the open job critical
+  const mixed = `on:\n  issues:\n    types: [opened]\njobs:\n  label:\n    steps:\n${action(`          allowed_non_write_users: '*'\n          claude_args: '--allowedTools "Bash(gh:*),Read"'`)}\n  fix:\n    steps:\n${action(`          claude_args: '--allowedTools "Bash,Read,Write"'`)}\n`;
+  const all = checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content: mixed }] } as any);
+  assert.ok(!all.some((f) => f.severity === 'critical'), JSON.stringify(all.map((f) => [f.id, f.severity])));
+});
+
+test('CI: confirmed patterns from research are critical', async () => {
+  const { checkWorkflows } = await import('./checks/workflows.js');
+  const crit = (content: string) =>
+    checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content }] } as any).some((f) => f.severity === 'critical');
+  // anyone opens a PR, agent has Bash(*)
+  assert.ok(crit(`on:\n  pull_request_target:\n    types: [opened]\njobs:\n  l:\n    steps:\n      - uses: anthropics/claude-code-action@v1\n        with:\n          allowed_non_write_users: "*"\n          claude_args: |\n            --allowedTools Bash(*)\n`));
+  // workflow_run after PR CI, bypassPermissions overrides the narrow tool list
+  assert.ok(crit(`on:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]\njobs:\n  r:\n    steps:\n      - uses: anthropics/claude-code-action@v1\n        with:\n          allowed_non_write_users: "*"\n          claude_args: |\n            --permission-mode bypassPermissions\n            --allowed-tools "Bash(gh:*) Read"\n`));
+  // raw CLI on new issues with permissions off
+  assert.ok(crit(`on:\n  issues:\n    types: [opened]\njobs:\n  t:\n    steps:\n      - run: claude -p "$(cat prompt.md)" --dangerously-skip-permissions\n`));
+});
+
+test('CI: a maintainer-applied label gate is not critical', async () => {
+  const { checkWorkflows } = await import('./checks/workflows.js');
+  const wf = `on:\n  issues:\n    types: [opened, labeled]\njobs:\n  r:\n    if: contains(github.event.issue.labels.*.name, 'research_needed')\n    steps:\n      - run: claude -p "research" --dangerously-skip-permissions\n`;
+  const f = checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content: wf }] } as any);
+  assert.ok(!f.some((x) => x.severity === 'critical'), JSON.stringify(f.map((x) => [x.id, x.severity])));
+  // a negated label check ("run unless labeled") is not a gate
+  const negated = wf.replace("if: contains(", "if: !contains(");
+  assert.ok(checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content: negated }] } as any).some((x) => x.severity === 'critical'));
+});

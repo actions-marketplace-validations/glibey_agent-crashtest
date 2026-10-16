@@ -11,10 +11,10 @@ const AGENT_STEP = /anthropics\/claude-code(-base)?-action|\bclaude\s+(-p|--prin
 // (codex-action is counted here to stay conservative).
 const CHECKED_ACTION = /anthropics\/claude-code-action@|openai\/codex-action@/;
 // A workflow-level check on who triggered it.
-const ACTOR_GATE = /author_association|github\.(actor|triggering_actor)\s*[!=]=|(sender|user)\.login\s*[!=]=|check-user-permission|getCollaboratorPermissionLevel|\/collaborators\/|permission\s*[!=]=\s*['"]?(admin|write|maintain)/i;
+const ACTOR_GATE = /author_association|github\.(actor|triggering_actor)\s*[!=]=|(sender|user)\.login\s*[!=]=|check-user-permission|getCollaboratorPermissionLevel|\/collaborators\/|permission\s*[!=]=\s*['"]?(admin|write|maintain)|allowed_?users|authorized_?users|\.includes\(\s*(context\.)?(actor|sender|github\.actor)|github\.event\.pull_request\.merged|(?<!!\s*)contains\(\s*github\.event\.(issue|pull_request)\.labels/i;
 // Event types only a maintainer can cause, so a human has looked at the issue first.
 const MAINTAINER_TYPES = ['labeled', 'unlabeled', 'assigned', 'milestoned'];
-const UNTRUSTED_EVENTS = ['pull_request_target', 'issue_comment', 'issues', 'discussion_comment', 'discussion', 'pull_request_review_comment', 'pull_request_review'];
+const UNTRUSTED_EVENTS = ['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion_comment', 'discussion', 'pull_request_review_comment', 'pull_request_review'];
 const SKIP_PERMISSIONS = /--dangerously-skip-permissions|--permission-mode[\s=]+["']?bypassPermissions|permission_mode:\s*["']?bypassPermissions/;
 // Case-sensitive on purpose: the tool is "Bash", while "bash scripts/x.sh" inside a rule is a command.
 const BROAD_TOOLS = /--allowed-?[Tt]ools[\s=]+["']?[^"'\n]*\bBash(?![(\w])|--allowed-?[Tt]ools[\s=]+["']?[^"'\n]*Bash\(\*\)/;
@@ -40,71 +40,79 @@ export function checkWorkflows(ctx: Context): Finding[] {
     if (!AGENT_STEP.test(text)) continue;
 
     const on = parseOn(text);
+    const found: Finding[] = [];
     const maintainerOnly = (e: string) => (on.get(e) ?? []).length > 0 && on.get(e)!.every((t) => MAINTAINER_TYPES.includes(t));
     const untrusted = [...on.keys()].filter((e) => UNTRUSTED_EVENTS.includes(e) && !maintainerOnly(e));
+    // Gates often live in a separate job whose output the agent job depends on, so check the whole file.
     const gated = ACTOR_GATE.test(text);
-    // An empty value ("" or '') keeps the write-access check on.
-    const nonWrite = text.match(/allowed_non_write_users:[ \t]*(.*)$/m)?.[1].replace(/^["']|["']$/g, '').trim() || undefined;
-    const anyBot = /allowed_bots:\s*["']?\*/.test(text);
-    const unchecked = !CHECKED_ACTION.test(text); // base action, raw CLI, or another vendor's agent
-    const skip = SKIP_PERMISSIONS.test(text);
-    const broad = BROAD_TOOLS.test(text);
-    // The documented safe shape for open triage bots: explicit narrow tools and no write access to code.
-    const narrowTools = /--allowed-?tools/i.test(text) && !broad && !skip;
-    const writesCode = /contents:\s*write|permissions:\s*write-all/.test(text);
-    const strangers = untrusted.length > 0 && !gated && (unchecked || nonWrite !== undefined || anyBot);
+    const workflowWrites = /contents:\s*write|permissions:\s*write-all/.test(text.split(/^jobs:/m)[0]);
+    for (const job of splitJobs(text).filter((j) => AGENT_STEP.test(j))) {
+      // An empty value ("" or '') keeps the write-access check on.
+      const nonWrite = job.match(/allowed_non_write_users:[ \t]*(.*)$/m)?.[1].replace(/^["']|["']$/g, '').trim() || undefined;
+      const anyBot = /allowed_bots:\s*["']?\*/.test(job);
+      const unchecked = !CHECKED_ACTION.test(job); // base action, raw CLI, or another vendor's agent
+      const skip = SKIP_PERMISSIONS.test(job);
+      const broad = BROAD_TOOLS.test(job);
+      // The documented safe shape for open triage bots: explicit narrow tools and no write access to code.
+      const narrowTools = /--allowed-?tools/i.test(job) && !broad && !skip;
+      const writesCode = workflowWrites || /contents:\s*write|permissions:\s*write-all/.test(job);
+      const strangers = untrusted.length > 0 && !gated && (unchecked || nonWrite !== undefined || anyBot);
 
-    if (nonWrite) {
-      const everyone = nonWrite === '*' || nonWrite.includes("'*'") || nonWrite.includes('"*"');
-      findings.push({
-        id: 'ci-non-write-users',
-        severity: !everyone || gated ? 'medium' : skip || broad ? 'critical' : narrowTools && !writesCode ? 'medium' : 'high',
-        title: everyone ? `Anyone on GitHub can drive the agent in ${rel}` : `Listed non-collaborators can drive the agent in ${rel}`,
-        detail: `allowed_non_write_users: ${nonWrite} turns off the write-access check, which the action's own docs call "a significant security risk". An issue or comment becomes the agent's instructions${
-          gated ? '. A job-level actor check still limits who can trigger it, so the input check is the real guard' : skip || broad ? ', and this agent can run any shell command' : narrowTools && !writesCode ? '. The tool list is narrow and the job cannot push code, which is the setup the docs recommend' : ', and its tools are not narrowed with --allowedTools'}.`,
-        fix: 'Remove allowed_non_write_users, or keep it with minimal workflow permissions, a narrow --allowedTools list and github_token (never a PAT).',
-        file: wf.file,
-      });
+      // With only schedule/dispatch/push triggers there is no outsider input, so the flag does nothing.
+      if (nonWrite && untrusted.length) {
+        const everyone = nonWrite === '*' || nonWrite.includes("'*'") || nonWrite.includes('"*"');
+        found.push({
+          id: 'ci-non-write-users',
+          severity: !everyone || gated ? 'medium' : skip || broad ? 'critical' : narrowTools && !writesCode ? 'medium' : 'high',
+          title: everyone ? `Anyone on GitHub can drive the agent in ${rel}` : `Listed non-collaborators can drive the agent in ${rel}`,
+          detail: `allowed_non_write_users: ${nonWrite} turns off the write-access check, which the action's own docs call "a significant security risk". An issue or comment becomes the agent's instructions${
+            gated ? '. A job-level actor check still limits who can trigger it, so the input check is the real guard' : skip || broad ? ', and this agent can run any shell command' : narrowTools && !writesCode ? '. The tool list is narrow and the job cannot push code, which is the setup the docs recommend' : ', and its tools are not narrowed with --allowedTools'}.`,
+          fix: 'Remove allowed_non_write_users, or keep it with minimal workflow permissions, a narrow --allowedTools list and github_token (never a PAT).',
+          file: wf.file,
+        });
+      }
+      if (anyBot) {
+        found.push({
+          id: 'ci-any-bot',
+          severity: narrowTools && !writesCode ? 'medium' : 'high',
+          title: `Any GitHub App can trigger the agent in ${rel}`,
+          detail: 'allowed_bots: "*" skips the repository-permission check for bots, so an App created by anyone can invoke the agent with a prompt it controls.',
+          fix: 'List the specific bots you trust instead of "*".',
+          file: wf.file,
+        });
+      }
+      if (untrusted.length && unchecked && !nonWrite && !gated) {
+        found.push({
+          id: 'ci-unchecked-trigger',
+          severity: skip || broad ? 'critical' : 'high',
+          title: `Agent runs on ${untrusted.join('/')} with no actor check in ${rel}`,
+          detail: `This workflow starts an agent directly (CLI, base action or another vendor), which does not verify who opened the issue or PR. Any GitHub user can feed it instructions${skip || broad ? ', and it runs with broad tool access' : ''}.`,
+          fix: 'Use anthropics/claude-code-action (it checks write access), or gate the job with an author_association / permission check.',
+          file: wf.file,
+        });
+      }
+      if (skip) {
+        found.push({
+          id: 'ci-skip-permissions',
+          severity: strangers ? 'critical' : 'high',
+          title: `Agent runs with all permission checks off in ${rel}`,
+          detail: 'bypassPermissions / --dangerously-skip-permissions lets any injected instruction run shell commands with the workflow\'s secrets in reach.',
+          fix: 'Pass a narrow --allowedTools list instead.',
+          file: wf.file,
+        });
+      } else if (broad) {
+        found.push({
+          id: 'ci-broad-tools',
+          severity: strangers ? 'critical' : 'medium',
+          title: `Agent may run any shell command in ${rel}`,
+          detail: 'The --allowedTools list includes Bash without a command pattern.',
+          fix: 'Allow exact commands, e.g. --allowedTools "Bash(gh issue view:*)".',
+          file: wf.file,
+        });
+      }
     }
-    if (anyBot) {
-      findings.push({
-        id: 'ci-any-bot',
-        severity: narrowTools && !writesCode ? 'medium' : 'high',
-        title: `Any GitHub App can trigger the agent in ${rel}`,
-        detail: 'allowed_bots: "*" skips the repository-permission check for bots, so an App created by anyone can invoke the agent with a prompt it controls.',
-        fix: 'List the specific bots you trust instead of "*".',
-        file: wf.file,
-      });
-    }
-    if (untrusted.length && unchecked && !nonWrite && !gated) {
-      findings.push({
-        id: 'ci-unchecked-trigger',
-        severity: skip || broad ? 'critical' : 'high',
-        title: `Agent runs on ${untrusted.join('/')} with no actor check in ${rel}`,
-        detail: `This workflow starts an agent directly (CLI, base action or another vendor), which does not verify who opened the issue or PR. Any GitHub user can feed it instructions${skip || broad ? ', and it runs with broad tool access' : ''}.`,
-        fix: 'Use anthropics/claude-code-action (it checks write access), or gate the job with an author_association / permission check.',
-        file: wf.file,
-      });
-    }
-    if (skip) {
-      findings.push({
-        id: 'ci-skip-permissions',
-        severity: strangers ? 'critical' : 'high',
-        title: `Agent runs with all permission checks off in ${rel}`,
-        detail: 'bypassPermissions / --dangerously-skip-permissions lets any injected instruction run shell commands with the workflow\'s secrets in reach.',
-        fix: 'Pass a narrow --allowedTools list instead.',
-        file: wf.file,
-      });
-    } else if (broad) {
-      findings.push({
-        id: 'ci-broad-tools',
-        severity: strangers ? 'critical' : 'medium',
-        title: `Agent may run any shell command in ${rel}`,
-        detail: 'The --allowedTools list includes Bash without a command pattern.',
-        fix: 'Allow exact commands, e.g. --allowedTools "Bash(gh issue view:*)".',
-        file: wf.file,
-      });
-    }
+    findings.push(...dedupe(found));
+
     if (on.has('pull_request_target') && headCheckoutInRoot(text)) {
       findings.push({
         id: 'ci-prt-head-checkout',
@@ -137,6 +145,32 @@ export function checkWorkflows(ctx: Context): Finding[] {
     }
   }
   return findings;
+}
+
+/** Splits a workflow into job bodies so tool and permission settings are judged per job. */
+export function splitJobs(yaml: string): string[] {
+  const lines = yaml.split('\n');
+  const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+  if (start < 0) return [yaml];
+  const jobs: string[][] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\S/.test(line)) break;
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(line)) jobs.push([]);
+    jobs[jobs.length - 1]?.push(line);
+  }
+  return jobs.length ? jobs.map((j) => j.join('\n')) : [yaml];
+}
+
+const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+
+/** One finding per id and file, keeping the most severe job. */
+function dedupe(found: Finding[]): Finding[] {
+  const best = new Map<string, Finding>();
+  for (const f of found) {
+    const prev = best.get(f.id);
+    if (!prev || RANK[f.severity] < RANK[prev.severity]) best.set(f.id, f);
+  }
+  return [...best.values()];
 }
 
 /** A checkout of the PR head whose own step has no `path:`, i.e. it lands in the workspace root. */

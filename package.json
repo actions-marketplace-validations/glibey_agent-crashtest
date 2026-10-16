@@ -1,6 +1,6 @@
 {
   "name": "agent-crashtest",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Crash-test your AI coding agent setup. One command, zero config: find out how easily Claude Code, Cursor & MCP can be hijacked by prompt injection.",
   "type": "module",
   "bin": {
