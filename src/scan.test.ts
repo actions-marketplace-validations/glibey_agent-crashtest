@@ -573,3 +573,10 @@ test('review: uvx == pins, --from and pipx run are read correctly', async () => 
   assert.equal(spec('C:\\tools\\npx.cmd', ['-y', 'pkg']), 'pkg');
   assert.equal(spec('node', ['server.js']), undefined);
 });
+
+test('CI: codex exec with approvals and sandbox bypassed on issues is critical', async () => {
+  const { checkWorkflows } = await import('./checks/workflows.js');
+  const wf = `on:\n  issues:\n    types: [opened]\njobs:\n  t:\n    steps:\n      - run: codex exec --dangerously-bypass-approvals-and-sandbox "triage the issue"\n`;
+  const f = checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content: wf }] } as any);
+  assert.ok(f.some((x) => x.id === 'ci-skip-permissions' && x.severity === 'critical'), JSON.stringify(f.map((x) => [x.id, x.severity])));
+});

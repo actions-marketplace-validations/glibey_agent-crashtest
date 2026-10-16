@@ -1010,7 +1010,7 @@ var ACTOR_GATE = /author_association\s*==|,\s*github\.event\.[\w.]*author_associ
 var ALLOWLISTED_ROLES = /author_association[\s\S]*\b(OWNER|MEMBER|COLLABORATOR)\b[\s\S]*\b(OWNER|MEMBER|COLLABORATOR)\b/;
 var MAINTAINER_TYPES = ["labeled", "unlabeled", "assigned", "milestoned"];
 var UNTRUSTED_EVENTS = ["pull_request_target", "workflow_run", "issue_comment", "issues", "discussion_comment", "discussion", "pull_request_review_comment", "pull_request_review"];
-var SKIP_PERMISSIONS = /--dangerously-skip-permissions|--permission-mode[\s=]+["']?bypassPermissions|permission_mode:\s*["']?bypassPermissions/;
+var SKIP_PERMISSIONS = /--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--permission-mode[\s=]+["']?bypassPermissions|permission_mode:\s*["']?bypassPermissions/;
 var BROAD_TOOLS = /--allowed-?[Tt]ools[\s=]+["']?[^"'\n]*\bBash(?![(\w])|--allowed-?[Tt]ools[\s=]+["']?[^"'\n]*Bash\(\*\)/;
 var HEAD_CHECKOUT = /ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.(sha|ref)\s*\}\}/;
 var API_KEY = /sk-ant-[A-Za-z0-9_-]{20,}/;

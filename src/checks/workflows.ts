@@ -19,7 +19,7 @@ const ALLOWLISTED_ROLES = /author_association[\s\S]*\b(OWNER|MEMBER|COLLABORATOR
 // Event types only a maintainer can cause, so a human has looked at the issue first.
 const MAINTAINER_TYPES = ['labeled', 'unlabeled', 'assigned', 'milestoned'];
 const UNTRUSTED_EVENTS = ['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion_comment', 'discussion', 'pull_request_review_comment', 'pull_request_review'];
-const SKIP_PERMISSIONS = /--dangerously-skip-permissions|--permission-mode[\s=]+["']?bypassPermissions|permission_mode:\s*["']?bypassPermissions/;
+const SKIP_PERMISSIONS = /--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--permission-mode[\s=]+["']?bypassPermissions|permission_mode:\s*["']?bypassPermissions/;
 // Case-sensitive on purpose: the tool is "Bash", while "bash scripts/x.sh" inside a rule is a command.
 const BROAD_TOOLS = /--allowed-?[Tt]ools[\s=]+["']?[^"'\n]*\bBash(?![(\w])|--allowed-?[Tt]ools[\s=]+["']?[^"'\n]*Bash\(\*\)/;
 const HEAD_CHECKOUT = /ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.(sha|ref)\s*\}\}/;

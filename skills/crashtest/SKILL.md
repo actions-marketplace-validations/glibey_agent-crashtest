@@ -12,7 +12,7 @@ Scan the user's AI agent setup with agent-crashtest, explain what is risky for *
 Use the first command that works. Both run locally and send nothing anywhere.
 
 - Inside the Claude Code plugin: `node "${CLAUDE_PLUGIN_ROOT}/plugin/agent-crashtest.mjs" --json`
-- Anywhere else: `npx --yes agent-crashtest@0.5.1 --json` (the version is pinned on purpose)
+- Anywhere else: `npx --yes agent-crashtest@0.5.2 --json` (the version is pinned on purpose)
 
 Run it from the project root. It checks the project and the user's global agent config; add `--project-only` if the user wants only the project.
 
