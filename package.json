@@ -14,6 +14,8 @@
   },
   "keywords": ["ai", "security", "prompt-injection", "claude-code", "cursor", "mcp", "agents", "red-team"],
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/glibey/agent-crashtest.git" },
+  "homepage": "https://github.com/glibey/agent-crashtest#readme",
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
