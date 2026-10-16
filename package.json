@@ -19,6 +19,7 @@
     "prepublishOnly": "rm -rf dist && tsc",
     "dev": "tsc && node dist/cli.js",
     "demo": "tsc && node dist/cli.js --demo",
+    "demo:svg": "tsc && node scripts/demo-svg.mjs > docs/demo.svg",
     "test": "tsc && node --test 'dist/**/*.test.js'"
   },
   "keywords": [

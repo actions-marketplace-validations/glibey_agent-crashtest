@@ -4,3 +4,5 @@ research-out
 research-out.log
 research-top
 research-ci
+research-*/
+research-*.log

@@ -1,7 +1,7 @@
 import type { ScanResult } from './scan.js';
 import type { Severity } from './types.js';
 
-const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+const useColor = (process.stdout.isTTY || !!process.env.FORCE_COLOR) && !process.env.NO_COLOR;
 const paint = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
 const c = {
   bold: paint('1'),
@@ -40,7 +40,7 @@ export function renderText(result: ScanResult, version: string, home: string): s
   for (const f of findings) {
     out.push(`  ${BADGE[f.severity](` ${f.severity.toUpperCase()} `)} ${c.bold(f.title)}`);
     out.push(wrap(f.detail, 4));
-    out.push(`    ${c.cyan('fix →')} ${f.fix}`);
+    out.push(wrap(`fix → ${f.fix}`, 4).replace('fix →', c.cyan('fix →')));
     if (f.file) out.push(c.dim(`    ${displayPath(f.file, result.dir, home)}`));
     out.push('');
   }

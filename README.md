@@ -6,6 +6,8 @@
 npx agent-crashtest
 ```
 
+<p align="center"><img src="docs/demo.svg" alt="agent-crashtest --demo output: score 0/100 with critical findings" width="820"></p>
+
 Claude Code, Cursor and MCP servers read web pages, READMEs, issues and emails — any of which can carry
 a prompt injection. `agent-crashtest` checks whether your setup would let that injection **steal your secrets**.
 
