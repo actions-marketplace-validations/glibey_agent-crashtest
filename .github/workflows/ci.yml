@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan this repo (must pass)
+        uses: ./
+        with:
+          fail-on: high
+
+      - name: Scan the vulnerable demo (must find criticals)
+        id: demo
+        uses: ./
+        with:
+          demo: 'true'
+          fail-on: none
+
+      - name: Check demo outputs
+        env:
+          SCORE: ${{ steps.demo.outputs.score }}
+          CRITICAL: ${{ steps.demo.outputs.critical }}
+        run: |
+          echo "score=$SCORE critical=$CRITICAL"
+          test "$SCORE" = "0"
+          test "$CRITICAL" -ge 1

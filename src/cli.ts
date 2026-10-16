@@ -3,6 +3,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { createDemoProject } from './demo.js';
+import { failsAt, reportToGithub, SEVERITIES } from './github.js';
 import { renderText } from './report.js';
 import { scan } from './scan.js';
 
@@ -16,7 +17,9 @@ const HELP = `
     --dir <path>       project to scan (default: current directory)
     --project-only     skip global config in your home directory
     --json             machine-readable output
-    --ci               exit with code 1 on critical or high findings
+    --fail-on <level>  exit with code 1 on findings at or above: critical, high, medium, low
+    --ci               same as --fail-on high
+    --github           GitHub Actions mode: PR annotations, job summary, step outputs
     --demo             scan a deliberately vulnerable sample project
     -v, --version
     -h, --help
@@ -34,6 +37,8 @@ const { values } = parseArgs({
     'project-only': { type: 'boolean' },
     json: { type: 'boolean' },
     ci: { type: 'boolean' },
+    'fail-on': { type: 'string' },
+    github: { type: 'boolean' },
     demo: { type: 'boolean' },
     version: { type: 'boolean', short: 'v' },
     help: { type: 'boolean', short: 'h' },
@@ -49,6 +54,12 @@ if (values.version) {
   process.exit(0);
 }
 
+const failOn = values['fail-on'] ?? (values.ci ? 'high' : 'none');
+if (failOn !== 'none' && !SEVERITIES.includes(failOn as never)) {
+  console.error(`--fail-on must be one of: ${SEVERITIES.join(', ')}, none`);
+  process.exit(2);
+}
+
 const home = homedir();
 const demoDir = values.demo ? createDemoProject() : undefined;
 try {
@@ -60,10 +71,9 @@ try {
 
   if (values.json) console.log(JSON.stringify(result, null, 2));
   else console.log(renderText(result, version, home));
+  if (values.github) reportToGithub(result, version, result.dir);
 
-  if (values.ci && result.findings.some((f) => f.severity === 'critical' || f.severity === 'high')) {
-    process.exitCode = 1;
-  }
+  if (failsAt(result, failOn)) process.exitCode = 1;
 } finally {
   if (demoDir) rmSync(demoDir, { recursive: true, force: true });
 }

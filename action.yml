@@ -1,0 +1,54 @@
+name: 'agent-crashtest'
+description: 'Crash-test AI agent setups (Claude Code, Cursor, MCP, agents in CI) for prompt-injection risks. Runs on the runner, sends nothing.'
+author: 'glibey'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  path:
+    description: 'Directory to scan, relative to the workspace.'
+    default: '.'
+  fail-on:
+    description: 'Fail the step on findings at or above this severity: critical, high, medium, low, or none.'
+    default: 'high'
+  demo:
+    description: 'Scan the built-in vulnerable sample project instead (for trying the action out).'
+    default: 'false'
+
+outputs:
+  score:
+    description: 'Score from 0 to 100.'
+    value: ${{ steps.scan.outputs.score }}
+  grade:
+    description: 'Letter grade A to F.'
+    value: ${{ steps.scan.outputs.grade }}
+  critical:
+    description: 'Number of critical findings.'
+    value: ${{ steps.scan.outputs.critical }}
+  high:
+    description: 'Number of high findings.'
+    value: ${{ steps.scan.outputs.high }}
+
+runs:
+  using: 'composite'
+  steps:
+    # Build from the exact ref the caller pinned, so no package is fetched from npm at run time.
+    - name: Build agent-crashtest
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --ignore-scripts --no-audit --no-fund --loglevel=error && npx tsc
+
+    # Inputs go through env, never straight into the script.
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_DEMO: ${{ inputs.demo }}
+        NO_COLOR: '1'
+      run: |
+        args=(--project-only --github --fail-on "$INPUT_FAIL_ON")
+        if [ "$INPUT_DEMO" = "true" ]; then args+=(--demo); else args+=(--dir "$GITHUB_WORKSPACE/$INPUT_PATH"); fi
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}"

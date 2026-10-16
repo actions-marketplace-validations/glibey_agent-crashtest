@@ -227,3 +227,22 @@ test('CI: a maintainer-applied label gate is not critical', async () => {
   const negated = wf.replace("if: contains(", "if: !contains(");
   assert.ok(checkWorkflows({ dir: '/r', workflows: [{ file: '/r/.github/workflows/a.yml', content: negated }] } as any).some((x) => x.severity === 'critical'));
 });
+
+test('GitHub mode: annotations escape properties and use repo-relative paths', async () => {
+  const { annotations, failsAt, summary } = await import('./github.js');
+  const result = {
+    dir: '/w', score: 58, grade: 'D',
+    findings: [
+      { id: 'a', severity: 'critical', title: 'Bad: x, y', detail: 'line1\nline2 100%', fix: 'do it', file: '/w/.mcp.json' },
+      { id: 'b', severity: 'low', title: 'Meh | pipe', detail: 'd', fix: 'f', file: '/elsewhere/x' },
+    ],
+    stats: {} as any,
+  } as any;
+  const [a, b] = annotations(result, '/w');
+  assert.equal(a, '::error file=.mcp.json,title=CRITICAL%3A Bad%3A x%2C y::line1%0Aline2 100%25%0AFix: do it');
+  assert.ok(b.startsWith('::notice title='), 'files outside the workspace get no file= property');
+  assert.ok(summary(result, '0.0.0', '/w').includes('Meh \\| pipe'));
+  assert.equal(failsAt(result, 'high'), true);
+  assert.equal(failsAt({ ...result, findings: [result.findings[1]] }, 'high'), false);
+  assert.equal(failsAt(result, 'none'), false);
+});

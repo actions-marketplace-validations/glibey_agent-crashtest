@@ -28,13 +28,38 @@ npx agent-crashtest --demo
 
 Supported: Claude Code, Cursor, Claude Desktop, VS Code (`.vscode/mcp.json`).
 
+## GitHub Action
+
+Check every pull request that touches agent config or AI-agent workflows:
+
+```yaml
+# .github/workflows/agent-crashtest.yml
+name: agent-crashtest
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: glibey/agent-crashtest@v1
+        with:
+          fail-on: high   # critical | high | medium | low | none
+```
+
+Findings show up as annotations on the PR diff and as a table in the job summary. Outputs: `score`, `grade`, `critical`, `high`.
+The action builds from the ref you pin and never downloads the package at run time.
+
 ## Options
 
 ```
 --dir <path>     project to scan (default: cwd)
 --project-only   skip global config in ~
 --json           machine-readable output
---ci             exit 1 on critical/high findings
+--fail-on <lvl>   exit 1 on findings at or above: critical, high, medium, low
+--ci             same as --fail-on high
+--github         GitHub Actions mode: PR annotations, job summary, step outputs
 --demo           scan a sample vulnerable project
 ```
 
@@ -46,6 +71,5 @@ Nothing leaves your machine. No network calls, no telemetry. Secrets are masked 
 
 - [ ] `--attack`: live crash test — runs your real agent against poisoned files in a sandbox with canary secrets
 - [ ] README badge with your grade
-- [ ] GitHub Action for PRs that change agent config
 
 MIT
