@@ -44,6 +44,7 @@ export function collect(opts: CollectOptions): Context {
     instructionFiles: collectInstructions(dir, home, includeHome),
     secretFiles,
     envKeys: collectEnvKeys(dir, secretFiles),
+    workflows: collectWorkflows(dir),
   };
 }
 
@@ -179,6 +180,14 @@ function stringMap(obj: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(obj)) out[k] = String(v);
   return out;
+}
+
+function collectWorkflows(dir: string): TextFile[] {
+  const wfDir = join(dir, '.github/workflows');
+  return safeReaddir(wfDir)
+    .filter((name) => /\.ya?ml$/.test(name))
+    .map((name) => ({ file: join(wfDir, name), content: readText(join(wfDir, name)) }))
+    .filter((f): f is TextFile => f.content !== undefined);
 }
 
 /** Reads only the variable names from project .env files. Values are never kept. */

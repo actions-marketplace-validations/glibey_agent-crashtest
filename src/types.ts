@@ -41,4 +41,6 @@ export interface Context {
   secretFiles: string[];
   /** Variable names (never values) found in project .env files, keyed by file. */
   envKeys: Record<string, string[]>;
+  /** GitHub Actions workflow files in the project. */
+  workflows: TextFile[];
 }

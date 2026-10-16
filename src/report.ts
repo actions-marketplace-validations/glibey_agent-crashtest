@@ -29,7 +29,7 @@ export function renderText(result: ScanResult, version: string, home: string): s
 
   out.push('');
   out.push(`  ${c.bold('💥 agent-crashtest')} ${c.dim(`v${version}`)}  ${c.dim('how hackable is your AI coding agent?')}`);
-  out.push(c.dim(`  scanned ${stats.settings} settings · ${stats.mcpServers} MCP servers · ${stats.instructionFiles} instruction/skill files · ${stats.secretFiles} secret files`));
+  out.push(c.dim(`  scanned ${stats.settings} settings · ${stats.mcpServers} MCP servers · ${stats.instructionFiles} instruction/skill files · ${stats.secretFiles} secret files · ${stats.workflows} CI workflows`));
   out.push('');
   out.push(`  ${c.bold('SCORE')}  ${color(c.bold(`${score}/100`))}   ${c.bold('grade')} ${color(c.bold(grade))}   ${bar(score, color)}`);
   out.push('');

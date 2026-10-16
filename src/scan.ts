@@ -3,6 +3,7 @@ import { checkInstructions } from './checks/instructions.js';
 import { checkMcp } from './checks/mcp.js';
 import { checkPermissions, readPermissions } from './checks/permissions.js';
 import { checkTrifecta } from './checks/trifecta.js';
+import { checkWorkflows } from './checks/workflows.js';
 import type { Context, Finding, Severity } from './types.js';
 
 export const PENALTY: Record<Severity, number> = { critical: 30, high: 12, medium: 5, low: 1 };
@@ -13,7 +14,7 @@ export interface ScanResult {
   score: number;
   grade: string;
   findings: Finding[];
-  stats: { settings: number; mcpServers: number; instructionFiles: number; secretFiles: number };
+  stats: { settings: number; mcpServers: number; instructionFiles: number; secretFiles: number; workflows: number };
 }
 
 export function scan(opts: CollectOptions): ScanResult {
@@ -27,6 +28,7 @@ export function evaluate(ctx: Context): ScanResult {
     ...checkPermissions(ctx, perms),
     ...checkMcp(ctx),
     ...checkInstructions(ctx),
+    ...checkWorkflows(ctx),
   ].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
 
   const score = Math.max(0, 100 - findings.reduce((sum, f) => sum + PENALTY[f.severity], 0));
@@ -40,6 +42,7 @@ export function evaluate(ctx: Context): ScanResult {
       mcpServers: ctx.mcpServers.length,
       instructionFiles: ctx.instructionFiles.length,
       secretFiles: ctx.secretFiles.length,
+      workflows: ctx.workflows.length,
     },
   };
 }
