@@ -8,6 +8,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "rm -rf dist && tsc",
     "dev": "tsc && node dist/cli.js",
     "demo": "tsc && node dist/cli.js --demo",
     "test": "tsc && node --test 'dist/**/*.test.js'"
