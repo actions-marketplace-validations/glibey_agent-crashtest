@@ -12,8 +12,9 @@ export interface Permissions {
   envDenied: boolean;
 }
 
-const EXFIL = /^Bash\((curl|wget|nc|ncat|netcat|scp|sftp|ssh|rsync|ftp|telnet|gh api|http|xh)\b/;
-const INTERPRETER = /^Bash\((python3?|node|deno|bun|ruby|perl|php|bash|sh|zsh|eval|npx|uvx)\b/;
+const NET_CMD = /^(curl|wget|nc|ncat|netcat|scp|sftp|ssh|rsync|ftp|telnet|http|xh)(?=$|[\s:])/;
+const LOCAL_HOST = /localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0/;
+const INTERPRETER = /^(python3?|node|deno|bun|ruby|perl|php|bash|sh|zsh|eval|npx|bunx|pnpx|uvx|tsx|ts-node)(?=$|[\s:])(.*)$/;
 const WALLET_KEY = /(^|_)(PRIVATE_?KEY|PRIV_?KEY|PK|MNEMONIC|SEED_?PHRASE|SECRET_?PHRASE|KEYPAIR|WALLET_?(KEY|SECRET))(_|$)/;
 
 export function readPermissions(ctx: Context): Permissions {
@@ -31,12 +32,36 @@ export function readPermissions(ctx: Context): Permissions {
     deny,
     bypass,
     bashUnrestricted: bypass || allow.some((r) => /^Bash(\(\*(:\*)?\))?$/.test(r.trim())),
-    exfilCommands: allow.filter((r) => EXFIL.test(r)),
-    interpreters: allow.filter((r) => INTERPRETER.test(r)),
+    exfilCommands: allow.filter(isExfilRule),
+    interpreters: allow.filter(isInterpreterRule),
     webFetchUnrestricted: bypass || allow.includes('WebFetch'),
     webSearch: bypass || allow.includes('WebSearch'),
     envDenied: deny.some((r) => /^Read\([^)]*\.env/.test(r) || /^Read\(\*\*\)$/.test(r)),
   };
+}
+
+function bashCommand(rule: string): string | undefined {
+  return rule.match(/^Bash\(([\s\S]*)\)$/)?.[1].trim();
+}
+
+/** A network command that can reach an attacker-chosen host without asking. */
+export function isExfilRule(rule: string): boolean {
+  const cmd = bashCommand(rule);
+  if (!cmd || !cmd.includes('*')) return false; // exact commands are reviewed once by the user
+  if (/^gh api(?=$|[\s:])/.test(cmd)) return true; // can POST anywhere on GitHub (gists, issues)
+  if (!NET_CMD.test(cmd) || LOCAL_HOST.test(cmd)) return false;
+  return !/https?:\/\/[^\s/*]+/.test(cmd); // a fixed host limits where data can go
+}
+
+/** An interpreter that will run arbitrary inline code, e.g. "python:*" or "node -e *". */
+export function isInterpreterRule(rule: string): boolean {
+  const m = bashCommand(rule)?.match(INTERPRETER);
+  if (!m) return false;
+  const [, bin, rawRest] = m;
+  const rest = rawRest.trim();
+  if (rest === '' || rest === ':*' || rest === '*') return true;
+  if (/^(-c|-e|--eval|-p|--print)\b/.test(rest) && rest.includes('*')) return true;
+  return /^(npx|bunx|pnpx)$/.test(bin) && /^(tsx|ts-node)(?=$|[\s:]).*\*/.test(rest);
 }
 
 export function checkPermissions(ctx: Context, perms: Permissions): Finding[] {

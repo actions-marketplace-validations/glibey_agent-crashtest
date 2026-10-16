@@ -80,3 +80,21 @@ test('wallet keys are critical, ordinary env is high, RANDOM_SEED is not a walle
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('only broad network and interpreter rules are flagged', async () => {
+  const { isExfilRule, isInterpreterRule } = await import('./checks/permissions.js');
+  for (const r of ['Bash(curl:*)', 'Bash(wget *)', 'Bash(gh api:*)', 'Bash(curl -X POST *)']) assert.ok(isExfilRule(r), r);
+  for (const r of ['Bash(curl -s http://localhost:8088/api/health)', 'Bash(curl http://127.0.0.1:3000/*)', 'Bash(curl https://api.example.com/*)', 'Bash(curl -s https://x.dev/status)', 'Bash(gh pr view:*)']) assert.ok(!isExfilRule(r), r);
+  for (const r of ['Bash(python:*)', 'Bash(python3 *)', 'Bash(node -e:*)', 'Bash(npx:*)', 'Bash(npx tsx:*)', 'Bash(bash:*)', 'Bash(node)']) assert.ok(isInterpreterRule(r), r);
+  for (const r of ['Bash(npx eslint:*)', 'Bash(npx tsc:*)', 'Bash(npx prisma:*)', 'Bash(bash scripts/*.sh)', 'Bash(python -m pytest:*)', 'Bash(node dist/cli.js:*)', 'Bash(nodemon:*)']) assert.ok(!isInterpreterRule(r), r);
+});
+
+test('defensive CLAUDE.md rules about .env are not flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    writeFileSync(join(dir, 'CLAUDE.md'), '- **Do NOT** `cat .env*` or print secrets.\nInstall: curl -fsSL https://bun.sh/install | bash\n');
+    assert.deepEqual(ids(dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

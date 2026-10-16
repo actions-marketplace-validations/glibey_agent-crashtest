@@ -3,15 +3,6 @@ import type { Context, Finding } from '../types.js';
 // Unicode "tag" characters are invisible but models read them as ASCII.
 const TAG_CHARS = /[\u{E0000}-\u{E007F}]+/gu;
 const BIDI = /[‪-‮⁦-⁩]/g;
-const ZERO_WIDTH = /[​⁠᠎]|(?<!^)﻿/g;
-
-const SUSPICIOUS: [RegExp, string][] = [
-  [/ignore (all |any )?(the )?(previous|prior|above) (instructions|rules)/i, 'tries to override earlier instructions'],
-  [/(do not|don't|never) (tell|inform|mention (this|it) to) the user/i, 'asks the agent to hide actions from you'],
-  [/(curl|wget)[^\n|]*\|\s*(ba|z)?sh\b/i, 'pipes a remote script straight into a shell'],
-  [/base64 (-d|--decode)/i, 'decodes hidden base64 payloads'],
-  [/(cat|read|upload|send|post)[^\n]{0,40}(~\/\.ssh|id_rsa|\.aws\/credentials|\.env\b)/i, 'touches credentials together with a read/send action'],
-];
 
 export function checkInstructions(ctx: Context): Finding[] {
   const findings: Finding[] = [];
@@ -31,33 +22,19 @@ export function checkInstructions(ctx: Context): Finding[] {
       });
     }
 
+    // Zero-width spaces are common in copied docs, so only bidi controls count here.
     const bidi = content.match(BIDI)?.length ?? 0;
-    const zw = content.match(ZERO_WIDTH)?.length ?? 0;
-    if (bidi > 0 || zw >= 3) {
+    if (bidi > 0) {
       findings.push({
         id: 'hidden-unicode',
         severity: 'high',
         title: `Invisible Unicode in ${rel}`,
-        detail: `${bidi} bidi-control and ${zw} zero-width characters. These are used to hide or disguise instructions.`,
+        detail: `${bidi} bidi-control characters. They reorder text so what you read differs from what the model reads.`,
         fix: 'Inspect the file with a hex viewer and strip the hidden characters.',
         file,
       });
     }
 
-    // Third-party skills often quote attack phrases defensively; only pattern-match files the user owns.
-    const inProject = file.startsWith(ctx.dir + '/');
-    const userOwned = inProject || file === `${ctx.home}/.claude/CLAUDE.md`;
-    const reasons = userOwned ? SUSPICIOUS.filter(([re]) => re.test(content)).map(([, why]) => why) : [];
-    if (reasons.length) {
-      findings.push({
-        id: 'suspicious-instructions',
-        severity: inProject ? 'high' : 'medium',
-        title: `Suspicious agent instructions in ${rel}`,
-        detail: `This file ${reasons.join('; ')}. Agent instruction files are loaded into every session.`,
-        fix: 'Read the file yourself. If you did not write those lines, remove them.',
-        file,
-      });
-    }
   }
   return findings;
 }

@@ -3,11 +3,12 @@
  * (never .env or other secrets), and run agent-crashtest checks on them.
  *
  *   node dist/research/scan-github.js [--pages 5] [--max-repos 2000] [--out research-out]
+ *   node dist/research/scan-github.js --from research-out/results.jsonl   # re-check known repos, no search
  *
  * Output: <out>/results.jsonl (one line per repo, private) and <out>/summary.md (aggregate stats).
  */
 import { execSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -38,6 +39,7 @@ const { values } = parseArgs({
     pages: { type: 'string', default: '5' },
     'max-repos': { type: 'string', default: '2000' },
     out: { type: 'string', default: 'research-out' },
+    from: { type: 'string' },
   },
 });
 const PAGES = Number(values.pages);
@@ -109,6 +111,8 @@ async function fetchStars(repos: string[]): Promise<Map<string, number>> {
 }
 
 async function fetchConfigs(repo: string): Promise<Record<string, string>> {
+  const cacheFile = join(OUT, 'cache', `${repo.replace('/', '__')}.json`);
+  if (existsSync(cacheFile)) return JSON.parse(readFileSync(cacheFile, 'utf8'));
   const files: Record<string, string> = {};
   await Promise.all(CONFIG_PATHS.map(async (p) => {
     try {
@@ -119,6 +123,7 @@ async function fetchConfigs(repo: string): Promise<Record<string, string>> {
       }
     } catch { /* missing file or network hiccup */ }
   }));
+  writeFileSync(cacheFile, JSON.stringify(files));
   return files;
 }
 
@@ -144,13 +149,21 @@ interface Row {
 }
 
 async function main() {
-  mkdirSync(OUT, { recursive: true });
+  mkdirSync(join(OUT, 'cache'), { recursive: true });
+  let repos: string[];
+  let stars: Map<string, number>;
+  if (values.from) {
+    const previous: Row[] = readFileSync(values.from, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    repos = previous.map((r) => r.repo);
+    stars = new Map(previous.map((r) => [r.repo, r.stars]));
+    log(`re-checking ${repos.length} repos from ${values.from}`);
+  } else {
+    repos = (await searchRepos()).slice(0, MAX_REPOS);
+    log(`found ${repos.length} repos, fetching stars`);
+    stars = await fetchStars(repos);
+  }
   const resultsFile = join(OUT, 'results.jsonl');
   writeFileSync(resultsFile, '');
-
-  const repos = (await searchRepos()).slice(0, MAX_REPOS);
-  log(`found ${repos.length} repos, fetching stars`);
-  const stars = await fetchStars(repos);
 
   const rows: Row[] = [];
   let next = 0;

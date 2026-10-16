@@ -1,11 +1,19 @@
 {
   "name": "agent-crashtest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Crash-test your AI coding agent setup. One command, zero config: find out how easily Claude Code, Cursor & MCP can be hijacked by prompt injection.",
   "type": "module",
-  "bin": { "agent-crashtest": "dist/cli.js" },
-  "files": ["dist", "!dist/*.test.js", "!dist/research"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "agent-crashtest": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/*.test.js",
+    "!dist/research"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "rm -rf dist && tsc",
@@ -13,9 +21,21 @@
     "demo": "tsc && node dist/cli.js --demo",
     "test": "tsc && node --test 'dist/**/*.test.js'"
   },
-  "keywords": ["ai", "security", "prompt-injection", "claude-code", "cursor", "mcp", "agents", "red-team"],
+  "keywords": [
+    "ai",
+    "security",
+    "prompt-injection",
+    "claude-code",
+    "cursor",
+    "mcp",
+    "agents",
+    "red-team"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/glibey/agent-crashtest.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/glibey/agent-crashtest.git"
+  },
   "homepage": "https://github.com/glibey/agent-crashtest#readme",
   "devDependencies": {
     "@types/node": "^22.0.0",
