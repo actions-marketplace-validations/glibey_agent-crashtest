@@ -14,6 +14,7 @@ export interface Permissions {
 
 const EXFIL = /^Bash\((curl|wget|nc|ncat|netcat|scp|sftp|ssh|rsync|ftp|telnet|gh api|http|xh)\b/;
 const INTERPRETER = /^Bash\((python3?|node|deno|bun|ruby|perl|php|bash|sh|zsh|eval|npx|uvx)\b/;
+const WALLET_KEY = /(^|_)(PRIVATE_?KEY|PRIV_?KEY|PK|MNEMONIC|SEED_?PHRASE|SECRET_?PHRASE|KEYPAIR|WALLET_?(KEY|SECRET))(_|$)/;
 
 export function readPermissions(ctx: Context): Permissions {
   const allow: string[] = [];
@@ -95,8 +96,18 @@ export function checkPermissions(ctx: Context, perms: Permissions): Finding[] {
     });
   }
 
-  const projectSecrets = ctx.secretFiles.filter((f) => f.startsWith(ctx.dir));
-  if (projectSecrets.length && !perms.envDenied) {
+  const projectSecrets = ctx.secretFiles.filter((f) => f.startsWith(ctx.dir + '/'));
+  const walletKeys = Object.entries(ctx.envKeys).flatMap(([file, names]) =>
+    names.filter((n) => WALLET_KEY.test(n.toUpperCase())).map((n) => `${n} (${file.slice(ctx.dir.length + 1)})`));
+  if (walletKeys.length && !perms.envDenied) {
+    findings.push({
+      id: 'wallet-keys-readable',
+      severity: 'critical',
+      title: 'Wallet private keys are readable by the agent',
+      detail: `${walletKeys.join(', ')}. One injected instruction can read the key, and a leaked private key means drained funds, not a rotated token.`,
+      fix: 'Add "Read(./.env)" and "Read(./.env.*)" to permissions.deny, and keep signing keys in a hardware wallet or a key manager, not in the repo.',
+    });
+  } else if (projectSecrets.length && !perms.envDenied) {
     findings.push({
       id: 'secrets-readable',
       severity: 'high',

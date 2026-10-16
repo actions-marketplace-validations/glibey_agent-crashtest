@@ -34,6 +34,7 @@ export function collect(opts: CollectOptions): Context {
     if (data && typeof data === 'object') claudeSettings.push({ file, data });
   }
 
+  const secretFiles = collectSecrets(dir, home, includeHome);
   return {
     dir,
     home,
@@ -41,7 +42,8 @@ export function collect(opts: CollectOptions): Context {
     claudeSettings,
     mcpServers: collectMcp(dir, home, includeHome),
     instructionFiles: collectInstructions(dir, home, includeHome),
-    secretFiles: collectSecrets(dir, home, includeHome),
+    secretFiles,
+    envKeys: collectEnvKeys(dir, secretFiles),
   };
 }
 
@@ -177,4 +179,18 @@ function stringMap(obj: Record<string, unknown>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(obj)) out[k] = String(v);
   return out;
+}
+
+/** Reads only the variable names from project .env files. Values are never kept. */
+function collectEnvKeys(dir: string, secretFiles: string[]): Record<string, string[]> {
+  const keys: Record<string, string[]> = {};
+  for (const file of secretFiles) {
+    if (!file.startsWith(dir + '/') || !/\/\.env[^/]*$/.test(file)) continue;
+    const names = (readText(file) ?? '')
+      .split('\n')
+      .map((line) => line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1])
+      .filter((n): n is string => !!n);
+    if (names.length) keys[file] = names;
+  }
+  return keys;
 }

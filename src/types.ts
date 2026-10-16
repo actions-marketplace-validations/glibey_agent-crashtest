@@ -39,4 +39,6 @@ export interface Context {
   mcpServers: McpServer[];
   instructionFiles: TextFile[];
   secretFiles: string[];
+  /** Variable names (never values) found in project .env files, keyed by file. */
+  envKeys: Record<string, string[]>;
 }

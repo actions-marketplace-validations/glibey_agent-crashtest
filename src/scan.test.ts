@@ -14,7 +14,7 @@ test('demo project gets totaled', () => {
   try {
     const result = run(dir);
     const found = result.findings.map((f) => f.id);
-    for (const id of ['lethal-trifecta', 'hidden-tag-chars', 'exfil-commands', 'interpreters', 'secrets-readable', 'auto-project-mcp', 'mcp-unpinned', 'mcp-plaintext-secret']) {
+    for (const id of ['lethal-trifecta', 'hidden-tag-chars', 'exfil-commands', 'interpreters', 'wallet-keys-readable', 'auto-project-mcp', 'mcp-unpinned', 'mcp-plaintext-secret']) {
       assert.ok(found.includes(id), `expected ${id}, got ${found.join(', ')}`);
     }
     assert.equal(result.grade, 'F');
@@ -62,6 +62,20 @@ test('bypassPermissions is critical', () => {
     mkdirSync(join(dir, '.claude'));
     writeFileSync(join(dir, '.claude/settings.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
     assert.ok(ids(dir).includes('bypass-permissions'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('wallet keys are critical, ordinary env is high, RANDOM_SEED is not a wallet', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'act-'));
+  try {
+    writeFileSync(join(dir, '.env'), 'RANDOM_SEED=1\nAPI_KEY=x\n');
+    assert.deepEqual(ids(dir), ['secrets-readable']);
+    writeFileSync(join(dir, '.env'), 'export POLY_PK=0xabc\n');
+    const f = run(dir).findings;
+    assert.deepEqual(f.map((x) => x.id), ['wallet-keys-readable']);
+    assert.doesNotMatch(f[0].detail, /0xabc/, 'values must never appear');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
