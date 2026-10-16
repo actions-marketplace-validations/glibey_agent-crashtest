@@ -4,6 +4,7 @@
  *
  *   node dist/research/scan-github.js [--pages 5] [--max-repos 2000] [--out research-out]
  *   node dist/research/scan-github.js --from research-out/results.jsonl   # re-check known repos, no search
+ *   node dist/research/scan-github.js --top 1000 --out research-top       # most-starred repos on GitHub
  *
  * Output: <out>/results.jsonl (one line per repo, private) and <out>/summary.md (aggregate stats).
  */
@@ -40,6 +41,7 @@ const { values } = parseArgs({
     'max-repos': { type: 'string', default: '2000' },
     out: { type: 'string', default: 'research-out' },
     from: { type: 'string' },
+    top: { type: 'string' },
   },
 });
 const PAGES = Number(values.pages);
@@ -87,6 +89,17 @@ async function searchRepos(): Promise<string[]> {
     }
   }
   return [...repos];
+}
+
+async function topRepos(n: number): Promise<Map<string, number>> {
+  const stars = new Map<string, number>();
+  for (let page = 1; stars.size < n && page <= 10; page++) {
+    const data = await gh(`https://api.github.com/search/repositories?q=stars:%3E1000&sort=stars&order=desc&per_page=100&page=${page}`);
+    for (const r of data.items ?? []) if (!r.fork && !r.archived) stars.set(r.full_name, r.stargazers_count);
+    log(`top repos page ${page}: ${stars.size}`);
+    await sleep(2500); // repository search: 30 requests/minute
+  }
+  return new Map([...stars].slice(0, n));
 }
 
 async function fetchStars(repos: string[]): Promise<Map<string, number>> {
@@ -152,7 +165,10 @@ async function main() {
   mkdirSync(join(OUT, 'cache'), { recursive: true });
   let repos: string[];
   let stars: Map<string, number>;
-  if (values.from) {
+  if (values.top) {
+    stars = await topRepos(Number(values.top));
+    repos = [...stars.keys()];
+  } else if (values.from) {
     const previous: Row[] = readFileSync(values.from, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     repos = previous.map((r) => r.repo);
     stars = new Map(previous.map((r) => [r.repo, r.stars]));
